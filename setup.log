@@ -1,0 +1,388 @@
+﻿=== PTaaS setup run: 06/24/2026 00:17:37 ===
+INFO  Installing Chocolatey...
+INFO  Installing Node.js 20 LTS...
+INFO  Installing PostgreSQL 16...
+=== PTaaS setup run: 06/24/2026 00:34:55 ===
+INFO  Chocolatey already installed.
+INFO  Node.js v20.19.0 already installed.
+INFO  Installing PostgreSQL 16...
+WARN  PostgreSQL failed (attempt 1/2): PostgreSQL installed but port 5432 isn't accepting connections yet - retrying...
+INFO  Installing PostgreSQL 16...
+FAIL  PostgreSQL failed: PostgreSQL installed but port 5432 isn't accepting connections yet
+INFO  Installing InfluxDB v2...
+INFO  Starting InfluxDB...
+WARN  InfluxDB failed (attempt 1/2): influxd.exe not found after install - retrying...
+INFO  Installing InfluxDB v2...
+INFO  Starting InfluxDB...
+FAIL  InfluxDB failed: influxd.exe not found after install
+FAIL  InfluxDB provisioning failed: Unable to connect to the remote server
+INFO  Installing Grafana...
+FAIL  Grafana did not respond on :3000 after configuration - check C:\Users\Administrator\Downloads\PTaaS\PTaaS\setup.log and Windows service 'Grafana'.
+INFO  Installing K6...
+INFO  Installing Node dependencies...
+WARN  backend\.env already exists - skipping (re-run with that file removed to reconfigure).
+OK    Database 'ptaas' ready.
+INFO  Running Prisma migrations...
+INFO  Starting backend temporarily to register admin user...
+OK    Admin user registered.
+WARN  agent\.env already exists - skipping.
+FAIL  Grafana dashboard sync failed: The remote server returned an error: (400) Bad Request.
+WARN  InfluxDB not responding on :8086 - attempting to start influxd...
+WARN  Grafana not responding on :3000 - attempting to start the service...
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             FAIL      
+Grafana              FAIL      
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 02:02:46 ===
+WARN  InfluxDB not responding on :8086 - attempting to start influxd...
+WARN  Grafana not responding on :3000 - attempting to start the service...
+WARN  agent\.env references an AGENT_ID that is missing/stale in the database - this causes the agent to loop on 'Connected' -> '1008 Unauthorized' -> reconnect.
+INFO  Re-registering agent against the running backend...
+=== PTaaS setup run: 06/24/2026 02:04:35 ===
+WARN  InfluxDB not responding on :8086 - attempting to start influxd...
+WARN  Grafana not responding on :3000 - attempting to start the service...
+WARN  agent\.env references an AGENT_ID that is missing/stale in the database - this causes the agent to loop on 'Connected' -> '1008 Unauthorized' -> reconnect.
+INFO  Re-registering agent against the running backend...
+OK    agent\.env written (ID: cmqrqasxy0001aw9suet70il7).
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             FAIL      
+Grafana              FAIL      
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   FAIL      
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 02:07:20 ===
+WARN  InfluxDB not responding on :8086 - attempting to start influxd...
+WARN  Grafana not responding on :3000 - attempting to start the service...
+WARN  agent\.env references an AGENT_ID that is missing/stale in the database - this causes the agent to loop on 'Connected' -> '1008 Unauthorized' -> reconnect.
+INFO  Re-registering agent against the running backend...
+OK    agent\.env written (ID: cmqrqecii0002aw9syhaknpba).
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             FAIL      
+Grafana              FAIL      
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   FAIL      
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 02:08:32 ===
+WARN  InfluxDB not responding on :8086 - attempting to start influxd...
+WARN  Grafana not responding on :3000 - attempting to start the service...
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             FAIL      
+Grafana              FAIL      
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 02:09:29 ===
+WARN  InfluxDB not responding on :8086 - attempting to start influxd...
+WARN  Grafana not responding on :3000 - attempting to start the service...
+WARN  agent\.env references an AGENT_ID that is missing/stale in the database - this causes the agent to loop on 'Connected' -> '1008 Unauthorized' -> reconnect.
+INFO  Re-registering agent against the running backend...
+OK    agent\.env written (ID: cmqrqh51m0003aw9s2r24ckuu).
+OK    Agent re-registered. Restart 'npm run agent:start' (or the agent process) to pick up the new credentials.
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             FAIL      
+Grafana              FAIL      
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   FIXED     
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 02:20:15 ===
+WARN  InfluxDB not responding on :8086 - attempting to start influxd...
+WARN  Grafana not responding on :3000 - attempting to start the service...
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             FAIL      
+Grafana              FAIL      
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 02:22:54 ===
+WARN  INFLUXDB_TOKEN in backend\.env is rejected by the running InfluxDB (HTTP 401).
+WARN  Grafana not responding on :3000 - attempting to start the service...
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       FAIL      
+Grafana              FAIL      
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 02:37:30 ===
+WARN  Grafana not responding on :3000 - attempting to start the service...
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              FAIL      
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 02:57:03 ===
+WARN  InfluxDB not responding on :8086 - attempting to start influxd...
+WARN  Grafana not responding on :3000 - attempting to start the service...
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              FAIL      
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 03:04:51 ===
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              OK        
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 03:06:09 ===
+WARN  Grafana not responding on :3000 - attempting to start it...
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              OK        
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 03:11:15 ===
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              OK        
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 04:03:29 ===
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              OK        
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Grafana API key      OK        
+Grafana dashboard    OK        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 04:04:18 ===
+OK    Re-synced PTaaS dashboard to Grafana.
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              OK        
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Grafana API key      OK        
+Grafana dashboard    FIXED     
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 04:07:34 ===
+WARN  GRAFANA_API_KEY was missing/invalid - minted a new one. Restart the backend to pick it up.
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              OK        
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Grafana API key      FIXED     
+Grafana dashboard    OK        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/24/2026 04:08:46 ===
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              OK        
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Grafana API key      OK        
+Grafana dashboard    OK        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 06/25/2026 07:03:16 ===
+INFO  Chocolatey already installed.
+INFO  Node.js v20.19.0 already installed.
+INFO  PostgreSQL already installed.
+INFO  Installing InfluxDB v2...
+INFO  Starting InfluxDB...
+INFO  InfluxDB already provisioned on this host - reusing existing backend\.env token if present.
+INFO  Grafana already installed.
+INFO  K6 already installed.
+INFO  Installing Node dependencies...
+WARN  backend\.env already exists - skipping (re-run with that file removed to reconfigure).
+FAIL  PostgreSQL database 'ptaas' failed: createdb: error: database creation failed: ERROR:  database "ptaas" already exists
+INFO  Running Prisma migrations...
+WARN  Port 3001 is already in use (node (PID 9568)) - assuming the backend is already running.
+FAIL  Admin user registration failed: The remote server returned an error: (409) Conflict.
+INFO  agent\.env verified against the database - skipping re-registration.
+OK    Grafana dashboard synced: http://localhost:3000/d/adwnc6t
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              OK        
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Grafana API key      OK        
+Grafana dashboard    OK        
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+

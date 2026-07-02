@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>PerfOps PTaaS — End-to-End Workflow</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0d0f18;
+  color: #e2e8f0;
+  padding: 28px 24px 40px;
+}
+
+/* Header */
+.hdr { text-align: center; margin-bottom: 36px; }
+.hdr h1 { font-size: 17px; font-weight: 700; color: #f1f5f9; letter-spacing: .3px; }
+.hdr p { font-size: 11px; color: #475569; margin-top: 5px; }
+.hdr-meta { font-size: 10px; color: #374151; margin-top: 8px; }
+
+/* Main flow */
+.flow { display: flex; flex-direction: column; gap: 0; max-width: 680px; margin: 0 auto; }
+
+/* Phase block */
+.phase { display: flex; align-items: flex-start; gap: 20px; position: relative; }
+
+/* Left spine */
+.spine { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 44px; }
+.spine-num {
+  width: 44px; height: 44px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; font-weight: 800; flex-shrink: 0; position: relative; z-index: 2;
+}
+.spine-line { width: 2px; flex: 1; min-height: 28px; }
+
+/* Phase card */
+.card { flex: 1; border-radius: 10px; border: 1px solid; padding: 16px 18px; margin-bottom: 8px; }
+.card-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.card-icon { font-size: 20px; line-height: 1; }
+.card-title { font-size: 14px; font-weight: 700; }
+.card-sub { font-size: 11px; color: #64748b; margin-top: 1px; }
+
+/* Step chips */
+.steps { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.step-chip {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 20px;
+  font-size: 10px; font-weight: 600; border: 1px solid; white-space: nowrap;
+}
+.chip-icon { font-size: 11px; }
+
+/* Connector */
+.conn-line { width: 2px; min-height: 24px; flex-shrink: 0; margin-left: 21px; }
+.conn-row { display: flex; align-items: center; gap: 8px; margin: 0; }
+.conn-label { font-size: 9px; color: #374151; letter-spacing: .4px; }
+
+/* Actor tags */
+.actor-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.actor-tag {
+  font-size: 9px; padding: 2px 8px; border-radius: 10px;
+  background: rgba(255,255,255,.05); border: 1px solid #1e2336;
+  color: #64748b; font-weight: 600; letter-spacing: .3px;
+}
+
+/* Phase colour themes */
+.p1 .spine-num  { background:#1e3a5f; color:#60a5fa; border:2px solid #1d4ed8; }
+.p1 .card       { border-color:#1d4ed8; background:rgba(29,78,216,.08); }
+.p1 .card-title { color:#93c5fd; }
+.p1 .step-chip  { border-color:#1d4ed850; background:rgba(29,78,216,.12); color:#93c5fd; }
+
+.p2 .spine-num  { background:#2d1b69; color:#c084fc; border:2px solid #7c3aed; }
+.p2 .card       { border-color:#7c3aed; background:rgba(124,58,237,.08); }
+.p2 .card-title { color:#c4b5fd; }
+.p2 .step-chip  { border-color:#7c3aed50; background:rgba(124,58,237,.12); color:#c4b5fd; }
+
+.p3 .spine-num  { background:#44280c; color:#fcd34d; border:2px solid #b45309; }
+.p3 .card       { border-color:#b45309; background:rgba(180,83,9,.08); }
+.p3 .card-title { color:#fcd34d; }
+.p3 .step-chip  { border-color:#b4530950; background:rgba(180,83,9,.12); color:#fcd34d; }
+
+.p4 .spine-num  { background:#14381f; color:#34d399; border:2px solid #047857; }
+.p4 .card       { border-color:#047857; background:rgba(4,120,87,.08); }
+.p4 .card-title { color:#6ee7b7; }
+.p4 .step-chip  { border-color:#04785750; background:rgba(4,120,87,.12); color:#6ee7b7; }
+
+.p5 .spine-num  { background:#082f49; color:#67e8f9; border:2px solid #0e7490; }
+.p5 .card       { border-color:#0e7490; background:rgba(14,116,144,.08); }
+.p5 .card-title { color:#67e8f9; }
+.p5 .step-chip  { border-color:#0e749050; background:rgba(14,116,144,.12); color:#67e8f9; }
+
+.p6 .spine-num  { background:#4a0020; color:#f9a8d4; border:2px solid #be185d; }
+.p6 .card       { border-color:#be185d; background:rgba(190,24,93,.08); }
+.p6 .card-title { color:#f9a8d4; }
+.p6 .step-chip  { border-color:#be185d50; background:rgba(190,24,93,.12); color:#f9a8d4; }
+
+/* Decision */
+.decision-section { max-width:680px; margin:20px auto 0; display:flex; align-items:center; gap:16px; }
+.diamond {
+  width: 54px; height: 54px; transform: rotate(45deg);
+  border: 2px solid #b45309; background: rgba(180,83,9,.18);
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; flex-shrink: 0;
+}
+.diamond-txt { transform: rotate(-45deg); font-size: 8px; font-weight: 800; color: #fcd34d; text-align: center; line-height: 1.2; }
+.branches { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+.branch { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.branch-divider { height: 1px; background: #1e2336; margin: 2px 0; }
+
+/* Outcome cards */
+.outcomes { display: flex; gap: 8px; margin-top: 20px; max-width: 680px; margin-left: auto; margin-right: auto; }
+.outcome { flex: 1; border-radius: 8px; border: 1px solid; padding: 14px; text-align: center; }
+.outcome-icon { font-size: 22px; margin-bottom: 6px; }
+.outcome-title { font-size: 11px; font-weight: 700; margin-bottom: 4px; }
+.outcome-sub { font-size: 9px; color: #64748b; line-height: 1.6; }
+.oc-green { border-color:#047857; background:rgba(4,120,87,.08); }
+.oc-green .outcome-title { color:#6ee7b7; }
+.oc-red   { border-color:#be185d; background:rgba(190,24,93,.08); }
+.oc-red   .outcome-title { color:#f9a8d4; }
+.oc-blue  { border-color:#1d4ed8; background:rgba(29,78,216,.08); }
+.oc-blue  .outcome-title { color:#93c5fd; }
+
+/* Footer */
+.footer { max-width:680px; margin:32px auto 0; text-align:center; font-size:9px; color:#1e2336; border-top:1px solid #1a1f2e; padding-top:14px; }
+
+/* Print styles */
+@media print {
+  body { background: #fff; color: #111; padding: 16px; }
+  .hdr h1 { color: #111; }
+  .hdr p, .hdr-meta { color: #555; }
+  .card { background: #f9fafb !important; border-color: #e5e7eb !important; }
+  .card-title { color: #111 !important; }
+  .step-chip { background: #f3f4f6 !important; border-color: #d1d5db !important; color: #374151 !important; }
+  .actor-tag { color: #6b7280 !important; background: #f3f4f6 !important; border-color: #e5e7eb !important; }
+  .spine-num { background: #f3f4f6 !important; color: #111 !important; border-color: #9ca3af !important; }
+  .spine-line { background: #d1d5db !important; }
+  .conn-label { color: #9ca3af !important; }
+  .conn-line { background: #d1d5db !important; }
+  .diamond { background: #fef3c7 !important; border-color: #d97706 !important; }
+  .diamond-txt { color: #92400e !important; }
+  .outcome { background: #f9fafb !important; border-color: #e5e7eb !important; }
+  .outcome-title { color: #111 !important; }
+  .footer { color: #9ca3af !important; border-color: #e5e7eb !important; }
+  .dl-bar { display: none !important; }
+}
+
+/* Download bar */
+.dl-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 16px; background: #090b12; border-bottom: 1px solid #1a1f2e;
+  margin: -28px -24px 28px;
+}
+.dl-bar span { font-size: 10px; color: #374151; }
+.dl-btn {
+  font-size: 10px; padding: 5px 14px; border-radius: 6px;
+  border: 1px solid #374151; background: #1f2937; color: #d1d5db;
+  cursor: pointer; font-weight: 600; text-decoration: none;
+}
+.dl-btn:hover { background: #374151; }
+</style>
+</head>
+<body>
+
+<div class="dl-bar">
+  <span>PerfOps PTaaS · End-to-End Workflow · Confidential</span>
+  <a class="dl-btn" onclick="window.print()">🖨️ Print / Save as PDF</a>
+</div>
+
+<div class="hdr">
+  <h1>PerfOps PTaaS — End-to-End Workflow</h1>
+  <p>Performance Testing as a Service · From test idea to release decision</p>
+  <div class="hdr-meta">React + Node.js + K6 + InfluxDB + Grafana · Claude AI</div>
+</div>
+
+<div class="flow">
+
+  <!-- PHASE 1 -->
+  <div class="phase p1">
+    <div class="spine">
+      <div class="spine-num">1</div>
+      <div class="spine-line" style="background:linear-gradient(to bottom,#1d4ed8,#7c3aed);"></div>
+    </div>
+    <div class="card">
+      <div class="actor-row">
+        <span class="actor-tag">👤 QA Engineer</span>
+        <span class="actor-tag">🤖 AI (Claude)</span>
+      </div>
+      <div class="card-top">
+        <div class="card-icon">✍️</div>
+        <div>
+          <div class="card-title">Author the Test</div>
+          <div class="card-sub">Define what to test, how hard, and what "good" looks like</div>
+        </div>
+      </div>
+      <div class="steps">
+        <div class="step-chip"><span class="chip-icon">🖥️</span> Visual form builder</div>
+        <div class="step-chip"><span class="chip-icon">🤖</span> AI — describe in plain English</div>
+        <div class="step-chip"><span class="chip-icon">📄</span> Upload CSV test cases</div>
+        <div class="step-chip"><span class="chip-icon">⌨️</span> Paste raw K6 script</div>
+        <div class="step-chip"><span class="chip-icon">🎯</span> Set SLO thresholds</div>
+        <div class="step-chip"><span class="chip-icon">📈</span> Define load profile</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn-row">
+    <div class="conn-line" style="background:linear-gradient(to bottom,#1d4ed8,#7c3aed);"></div>
+    <div class="conn-label">TestSpec saved to database</div>
+  </div>
+
+  <!-- PHASE 2 -->
+  <div class="phase p2">
+    <div class="spine">
+      <div class="spine-num">2</div>
+      <div class="spine-line" style="background:linear-gradient(to bottom,#7c3aed,#b45309);"></div>
+    </div>
+    <div class="card">
+      <div class="actor-row">
+        <span class="actor-tag">🔧 DevOps / Admin</span>
+      </div>
+      <div class="card-top">
+        <div class="card-icon">⚙️</div>
+        <div>
+          <div class="card-title">Configure Environment</div>
+          <div class="card-sub">Set up where the test runs and what credentials it uses</div>
+        </div>
+      </div>
+      <div class="steps">
+        <div class="step-chip"><span class="chip-icon">🌐</span> Register target environments</div>
+        <div class="step-chip"><span class="chip-icon">🔐</span> Link secrets &amp; tokens</div>
+        <div class="step-chip"><span class="chip-icon">🤖</span> Deploy execution agent</div>
+        <div class="step-chip"><span class="chip-icon">✅</span> Verify integrations online</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn-row">
+    <div class="conn-line" style="background:linear-gradient(to bottom,#7c3aed,#b45309);"></div>
+    <div class="conn-label">Agent connected · environment ready</div>
+  </div>
+
+  <!-- PHASE 3 -->
+  <div class="phase p3">
+    <div class="spine">
+      <div class="spine-num">3</div>
+      <div class="spine-line" style="background:linear-gradient(to bottom,#b45309,#047857);"></div>
+    </div>
+    <div class="card">
+      <div class="actor-row">
+        <span class="actor-tag">▶️ QA Engineer</span>
+        <span class="actor-tag">🔁 Scheduler</span>
+        <span class="actor-tag">🚀 CI/CD Pipeline</span>
+      </div>
+      <div class="card-top">
+        <div class="card-icon">🚦</div>
+        <div>
+          <div class="card-title">Trigger the Run</div>
+          <div class="card-sub">Start a test manually, on a schedule, or from a CI/CD pipeline</div>
+        </div>
+      </div>
+      <div class="steps">
+        <div class="step-chip"><span class="chip-icon">🖱️</span> Manual — click Run in UI</div>
+        <div class="step-chip"><span class="chip-icon">🕐</span> Scheduled — cron expression</div>
+        <div class="step-chip"><span class="chip-icon">🔗</span> API call from CI/CD</div>
+        <div class="step-chip"><span class="chip-icon">📜</span> K6 script generated</div>
+        <div class="step-chip"><span class="chip-icon">📡</span> Job dispatched to agent</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn-row">
+    <div class="conn-line" style="background:linear-gradient(to bottom,#b45309,#047857);"></div>
+    <div class="conn-label">Job dispatched via WebSocket</div>
+  </div>
+
+  <!-- PHASE 4 -->
+  <div class="phase p4">
+    <div class="spine">
+      <div class="spine-num">4</div>
+      <div class="spine-line" style="background:linear-gradient(to bottom,#047857,#0e7490);"></div>
+    </div>
+    <div class="card">
+      <div class="actor-row">
+        <span class="actor-tag">⚡ Execution Agent</span>
+        <span class="actor-tag">👥 Virtual Users (K6)</span>
+      </div>
+      <div class="card-top">
+        <div class="card-icon">⚡</div>
+        <div>
+          <div class="card-title">Execute Load Test</div>
+          <div class="card-sub">Agent runs K6, virtual users ramp up and hit the target system</div>
+        </div>
+      </div>
+      <div class="steps">
+        <div class="step-chip"><span class="chip-icon">🔼</span> VUs ramp up per load profile</div>
+        <div class="step-chip"><span class="chip-icon">🌐</span> HTTP requests to target</div>
+        <div class="step-chip"><span class="chip-icon">✅</span> Assertions checked per request</div>
+        <div class="step-chip"><span class="chip-icon">📊</span> Metrics written to InfluxDB</div>
+        <div class="step-chip"><span class="chip-icon">📡</span> Live stdout streamed to UI</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn-row">
+    <div class="conn-line" style="background:linear-gradient(to bottom,#047857,#0e7490);"></div>
+    <div class="conn-label">Metrics flowing live to InfluxDB &amp; browser</div>
+  </div>
+
+  <!-- PHASE 5 -->
+  <div class="phase p5">
+    <div class="spine">
+      <div class="spine-num">5</div>
+      <div class="spine-line" style="background:linear-gradient(to bottom,#0e7490,#be185d);"></div>
+    </div>
+    <div class="card">
+      <div class="actor-row">
+        <span class="actor-tag">👀 QA Engineer</span>
+        <span class="actor-tag">📊 QA Manager</span>
+      </div>
+      <div class="card-top">
+        <div class="card-icon">📊</div>
+        <div>
+          <div class="card-title">Observe in Real Time</div>
+          <div class="card-sub">Watch the test live — logs, metrics, and Grafana dashboards</div>
+        </div>
+      </div>
+      <div class="steps">
+        <div class="step-chip"><span class="chip-icon">📟</span> Live log stream in UI</div>
+        <div class="step-chip"><span class="chip-icon">📈</span> Grafana — p50/p95/p99 panels</div>
+        <div class="step-chip"><span class="chip-icon">👥</span> VU ramp curve</div>
+        <div class="step-chip"><span class="chip-icon">❌</span> Error rate &amp; breakdown</div>
+        <div class="step-chip"><span class="chip-icon">🔔</span> Threshold breach alerts</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn-row">
+    <div class="conn-line" style="background:linear-gradient(to bottom,#0e7490,#be185d);"></div>
+    <div class="conn-label">Test completes · SLOs evaluated</div>
+  </div>
+
+  <!-- PHASE 6 -->
+  <div class="phase p6">
+    <div class="spine">
+      <div class="spine-num">6</div>
+      <div class="spine-line" style="background:none;"></div>
+    </div>
+    <div class="card">
+      <div class="actor-row">
+        <span class="actor-tag">📋 QA Manager</span>
+        <span class="actor-tag">🚀 Release Team</span>
+      </div>
+      <div class="card-top">
+        <div class="card-icon">📋</div>
+        <div>
+          <div class="card-title">Report &amp; Decide</div>
+          <div class="card-sub">Review results, evaluate SLO compliance, make the release call</div>
+        </div>
+      </div>
+      <div class="steps">
+        <div class="step-chip"><span class="chip-icon">📄</span> Execution report saved</div>
+        <div class="step-chip"><span class="chip-icon">🎯</span> Per-threshold pass / fail</div>
+        <div class="step-chip"><span class="chip-icon">📉</span> Trend vs previous runs</div>
+        <div class="step-chip"><span class="chip-icon">🔔</span> Breach notifications sent</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /flow -->
+
+<!-- Decision gate -->
+<div class="decision-section">
+  <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0;">
+    <div class="diamond">
+      <div class="diamond-txt">SLO<br>PASS?</div>
+    </div>
+    <div style="font-size:9px;color:#64748b;">gate check</div>
+  </div>
+  <div class="branches">
+    <div class="branch" style="color:#34d399;">
+      <span>✅</span>
+      <span>All thresholds met → <strong>RELEASE</strong></span>
+    </div>
+    <div class="branch-divider"></div>
+    <div class="branch" style="color:#f87171;">
+      <span>❌</span>
+      <span>Threshold breached → <strong>BLOCK</strong> · fix bottleneck · re-run from Phase 3</span>
+    </div>
+  </div>
+</div>
+
+<!-- Outcomes -->
+<div class="outcomes">
+  <div class="outcome oc-green">
+    <div class="outcome-icon">✅</div>
+    <div class="outcome-title">All SLOs Pass</div>
+    <div class="outcome-sub">Deployment gates green · release proceeds · results archived</div>
+  </div>
+  <div class="outcome oc-red">
+    <div class="outcome-icon">🚨</div>
+    <div class="outcome-title">SLO Breach</div>
+    <div class="outcome-sub">Alert fired · deployment blocked · team investigates &amp; re-tests</div>
+  </div>
+  <div class="outcome oc-blue">
+    <div class="outcome-icon">🔄</div>
+    <div class="outcome-title">Iterate</div>
+    <div class="outcome-sub">Tune load profile or thresholds · re-run · track trend over time</div>
+  </div>
+</div>
+
+<div class="footer">
+  PerfOps · Performance Testing as a Service · Confidential
+</div>
+
+</body>
+</html>

@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PerfOps PTaaS — End-to-End Workflow</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #ffffff;
+  color: #0f172a;
+  padding: 36px 32px 56px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* ── HEADER ── */
+.hdr { text-align: center; margin-bottom: 40px; }
+.eyebrow {
+  display: inline-block;
+  font-size: 10px; font-weight: 700; letter-spacing: 2.5px;
+  text-transform: uppercase; color: #2563eb;
+  background: #eff6ff; border: 1px solid #bfdbfe;
+  padding: 4px 14px; border-radius: 20px; margin-bottom: 14px;
+}
+.hdr h1 { font-size: 26px; font-weight: 800; color: #0f172a; letter-spacing: -.4px; line-height: 1.2; }
+.hdr h1 em { color: #2563eb; font-style: normal; }
+.hdr-sub { font-size: 12px; color: #64748b; margin-top: 8px; line-height: 1.7; max-width: 560px; margin-left: auto; margin-right: auto; }
+.hdr-rule { width: 56px; height: 3px; margin: 16px auto 0; background: linear-gradient(90deg, #2563eb, #7c3aed); border-radius: 2px; }
+
+/* ── STAT ROW ── */
+.stats { display: flex; gap: 0; border: 1.5px solid #e2e8f0; border-radius: 12px; overflow: hidden; margin-bottom: 36px; }
+.stat { flex: 1; padding: 16px 10px; text-align: center; border-right: 1px solid #e2e8f0; background: #f8fafc; }
+.stat:last-child { border-right: none; }
+.stat-val { font-size: 20px; font-weight: 800; color: #2563eb; line-height: 1; }
+.stat-lbl { font-size: 9px; color: #94a3b8; margin-top: 4px; letter-spacing: .5px; text-transform: uppercase; font-weight: 600; }
+
+/* ── LAYER WRAPPER ── */
+.layer-block { display: flex; margin-bottom: 8px; border-radius: 12px; overflow: hidden; border: 1.5px solid; }
+.layer-tab {
+  writing-mode: vertical-rl; text-orientation: mixed; transform: rotate(180deg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase;
+  padding: 16px 10px; flex-shrink: 0; width: 36px; gap: 0;
+}
+.lt-fe { background: #eff6ff; color: #1d4ed8; border-right: 1.5px solid #bfdbfe; }
+.lt-be { background: #f5f3ff; color: #5b21b6; border-right: 1.5px solid #ddd6fe; }
+.layer-inner { flex: 1; padding: 20px 18px; }
+.lb-fe { border-color: #bfdbfe; background: #f8fbff; }
+.lb-be { border-color: #ddd6fe; background: #faf8ff; }
+
+.layer-inner-label {
+  font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  color: #94a3b8; margin-bottom: 16px;
+}
+
+/* ── FLOW ROW ── */
+.flow-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+/* ── NODE ── */
+.node-wrap { display: flex; align-items: center; gap: 0; }
+
+.node {
+  border-radius: 10px; border: 1.5px solid;
+  padding: 14px 12px 12px;
+  width: 120px; flex-shrink: 0;
+  text-align: center;
+  transition: box-shadow .15s, transform .15s;
+  position: relative;
+}
+.node:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.1); }
+
+.node-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%;
+  font-size: 9px; font-weight: 800; border: 2px solid #fff;
+  margin-bottom: 8px;
+}
+.node-icon { font-size: 22px; line-height: 1; margin-bottom: 6px; display: block; }
+.node-title { font-size: 11px; font-weight: 700; line-height: 1.3; margin-bottom: 4px; }
+.node-sub { font-size: 8px; color: #64748b; line-height: 1.5; }
+
+/* ── ARROW ── */
+.arrow {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 32px; flex-shrink: 0; gap: 2px; padding-top: 8px;
+}
+.arr-shaft { height: 1.5px; width: 100%; }
+.arr-tip { width: 0; height: 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; align-self: flex-end; }
+.arr-label { font-size: 7px; text-align: center; line-height: 1.3; margin-top: 3px; white-space: nowrap; }
+
+/* ── K6 NODE (wide) ── */
+.k6-node {
+  border-radius: 10px; border: 1.5px solid #a7f3d0;
+  background: #f0fdf4;
+  padding: 14px 14px 12px;
+  flex-shrink: 0; width: 310px;
+  transition: box-shadow .15s;
+  position: relative;
+}
+.k6-node:hover { box-shadow: 0 6px 20px rgba(0,0,0,.1); }
+
+.k6-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 12px;
+}
+.k6-badge {
+  width: 20px; height: 20px; border-radius: 50%;
+  background: #059669; color: #fff; border: 2px solid #fff;
+  font-size: 9px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.k6-icon { font-size: 18px; line-height: 1; }
+.k6-title { font-size: 12px; font-weight: 700; color: #047857; }
+.k6-sub { font-size: 8px; color: #64748b; margin-top: 1px; }
+
+.k6-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.k6-group-label {
+  font-size: 8px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase;
+  color: #94a3b8; margin-bottom: 5px;
+}
+.k6-chips { display: flex; flex-direction: column; gap: 3px; }
+.k6-chip {
+  font-size: 8px; padding: 4px 8px; border-radius: 6px;
+  border: 1px solid #a7f3d0; background: #d1fae5;
+  color: #065f46; font-weight: 600;
+  display: flex; align-items: center; gap: 4px;
+  white-space: nowrap;
+}
+
+/* load profile */
+.lp-label { font-size: 8px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: #94a3b8; margin-bottom: 5px; }
+.lp-bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; border: 1px solid #a7f3d0; }
+.lp-seg {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 7px; font-weight: 700; color: #fff;
+}
+
+/* ── NODE COLOUR THEMES ── */
+.n-0 { border-color: #e2e8f0; background: #f8fafc; }
+.n-0 .node-badge { background: #64748b; color: #fff; }
+.n-0 .node-title { color: #334155; }
+
+.n-1 { border-color: #bfdbfe; background: #eff6ff; }
+.n-1 .node-badge { background: #2563eb; color: #fff; }
+.n-1 .node-title { color: #1d4ed8; }
+
+.n-2 { border-color: #ddd6fe; background: #f5f3ff; }
+.n-2 .node-badge { background: #7c3aed; color: #fff; }
+.n-2 .node-title { color: #5b21b6; }
+
+.n-4 { border-color: #fbcfe8; background: #fdf2f8; }
+.n-4 .node-badge { background: #db2777; color: #fff; }
+.n-4 .node-title { color: #be185d; }
+
+.n-5 { border-color: #fde68a; background: #fffbeb; }
+.n-5 .node-badge { background: #d97706; color: #fff; }
+.n-5 .node-title { color: #b45309; }
+
+.n-6 { border-color: #a5f3fc; background: #f0fdfe; }
+.n-6 .node-badge { background: #0891b2; color: #fff; }
+.n-6 .node-title { color: #0e7490; }
+
+/* ── ARROW COLOURS ── */
+.a-gray .arr-shaft { background: #cbd5e1; } .a-gray .arr-tip { border-left: 6px solid #cbd5e1; } .a-gray .arr-label { color: #94a3b8; }
+.a-blue .arr-shaft { background: #93c5fd; } .a-blue .arr-tip { border-left: 6px solid #93c5fd; } .a-blue .arr-label { color: #3b82f6; }
+.a-violet .arr-shaft { background: #c4b5fd; } .a-violet .arr-tip { border-left: 6px solid #c4b5fd; } .a-violet .arr-label { color: #7c3aed; }
+.a-green .arr-shaft { background: #6ee7b7; } .a-green .arr-tip { border-left: 6px solid #6ee7b7; } .a-green .arr-label { color: #059669; }
+.a-pink .arr-shaft { background: #f9a8d4; } .a-pink .arr-tip { border-left: 6px solid #f9a8d4; } .a-pink .arr-label { color: #db2777; }
+.a-amber .arr-shaft { background: #fde68a; } .a-amber .arr-tip { border-left: 6px solid #fde68a; } .a-amber .arr-label { color: #d97706; }
+
+/* ── BACKEND NODE (same width as frontend) ── */
+.be-node {
+  border-radius: 10px; border: 1.5px solid #e2e8f0;
+  padding: 12px; width: 120px; flex-shrink: 0;
+  text-align: center; background: #f8fafc;
+  transition: box-shadow .15s;
+}
+.be-node:hover { box-shadow: 0 4px 14px rgba(0,0,0,.08); }
+.be-icon { font-size: 18px; margin-bottom: 5px; display: block; }
+.be-title { font-size: 10px; font-weight: 700; color: #334155; line-height: 1.3; margin-bottom: 3px; }
+.be-sub { font-size: 8px; color: #64748b; line-height: 1.5; }
+
+/* wide be node for K6 */
+.be-node-wide {
+  border-radius: 10px; border: 1.5px solid #bbf7d0;
+  padding: 12px 14px; width: 310px; flex-shrink: 0;
+  background: #f0fdf4;
+  transition: box-shadow .15s;
+}
+.be-node-wide:hover { box-shadow: 0 4px 14px rgba(0,0,0,.08); }
+.be-wide-title { font-size: 10px; font-weight: 700; color: #047857; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
+.be-wide-steps { display: flex; flex-direction: column; gap: 3px; }
+.be-wide-step {
+  font-size: 8px; padding: 3px 8px; border-radius: 5px;
+  background: #d1fae5; border: 1px solid #a7f3d0;
+  color: #065f46; font-weight: 600;
+  display: flex; align-items: center; gap: 4px;
+}
+
+/* ── INTEGRATIONS ── */
+.integrations-section { margin-top: 20px; }
+.section-title {
+  font-size: 9px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase;
+  color: #94a3b8; margin-bottom: 12px;
+}
+.int-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.int-card {
+  flex: 1; min-width: 200px;
+  border: 1.5px solid; border-radius: 10px;
+  padding: 14px 16px; display: flex; align-items: flex-start; gap: 10px;
+}
+.int-icon { font-size: 24px; flex-shrink: 0; }
+.int-name { font-size: 11px; font-weight: 700; margin-bottom: 3px; }
+.int-desc { font-size: 9px; color: #64748b; line-height: 1.6; }
+.int-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.int-tag { font-size: 8px; padding: 2px 7px; border-radius: 10px; font-weight: 600; border: 1px solid; }
+
+.ic-influx { border-color: #e879f9; background: #fdf4ff; }
+.ic-influx .int-name { color: #86198f; }
+.ic-influx .int-tag { border-color: #e879f9; background: #fae8ff; color: #86198f; }
+.ic-grafana { border-color: #fca5a5; background: #fff1f2; }
+.ic-grafana .int-name { color: #be123c; }
+.ic-grafana .int-tag { border-color: #fca5a5; background: #ffe4e6; color: #be123c; }
+.ic-pg { border-color: #93c5fd; background: #eff6ff; }
+.ic-pg .int-name { color: #1d4ed8; }
+.ic-pg .int-tag { border-color: #93c5fd; background: #dbeafe; color: #1d4ed8; }
+
+/* ── GATE & OUTCOMES ── */
+.gate-outcomes { display: grid; grid-template-columns: auto 1fr; gap: 16px; margin-top: 20px; align-items: center; }
+.diamond-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.diamond {
+  width: 60px; height: 60px; transform: rotate(45deg);
+  border: 2px solid #d97706; background: #fef3c7;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 5px;
+}
+.diamond-txt { transform: rotate(-45deg); font-size: 8px; font-weight: 800; color: #92400e; text-align: center; line-height: 1.3; }
+.diamond-label { font-size: 8px; color: #94a3b8; font-weight: 600; }
+.outcomes-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+.oc {
+  border: 1.5px solid; border-radius: 10px;
+  padding: 14px; display: flex; align-items: flex-start; gap: 10px;
+}
+.oc-icon { font-size: 20px; flex-shrink: 0; }
+.oc-title { font-size: 11px; font-weight: 700; margin-bottom: 3px; }
+.oc-desc { font-size: 9px; color: #64748b; line-height: 1.6; }
+.oc-pass { border-color: #a7f3d0; background: #f0fdf4; }
+.oc-pass .oc-title { color: #047857; }
+.oc-fail { border-color: #fca5a5; background: #fff1f2; }
+.oc-fail .oc-title { color: #b91c1c; }
+.oc-iter { border-color: #bfdbfe; background: #eff6ff; }
+.oc-iter .oc-title { color: #1d4ed8; }
+
+/* ── FOOTER ── */
+.footer { text-align: center; margin-top: 36px; font-size: 9px; color: #cbd5e1; border-top: 1px solid #f1f5f9; padding-top: 16px; }
+
+/* ── PRINT ── */
+@media print {
+  body { padding: 16px; }
+  .dl-bar { display: none !important; }
+}
+
+/* ── DL BAR ── */
+.dl-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 9px 16px; background: #f8fafc; border: 1px solid #e2e8f0;
+  border-radius: 8px; margin-bottom: 28px;
+}
+.dl-bar span { font-size: 10px; color: #94a3b8; }
+.dl-btn {
+  font-size: 10px; padding: 6px 16px; border-radius: 6px;
+  border: 1.5px solid #e2e8f0; background: #fff; color: #334155;
+  cursor: pointer; font-weight: 600;
+  text-decoration: none; display: inline-block;
+}
+.dl-btn:hover { background: #f1f5f9; }
+</style>
+</head>
+<body>
+
+<div class="dl-bar">
+  <span>PerfOps PTaaS · End-to-End Workflow · Management Overview · Confidential</span>
+  <a class="dl-btn" onclick="window.print()">🖨️ Print / Save as PDF</a>
+</div>
+
+<!-- HEADER -->
+<div class="hdr">
+  <div class="eyebrow">Management Overview · PerfOps</div>
+  <h1>Performance Testing <em>as a Service</em></h1>
+  <div class="hdr-sub">End-to-end workflow across Frontend, Backend &amp; Integrations — from test idea to release decision</div>
+  <div class="hdr-rule"></div>
+</div>
+
+<!-- STATS -->
+<div class="stats">
+  <div class="stat"><div class="stat-val">3</div><div class="stat-lbl">Script Sources</div></div>
+  <div class="stat"><div class="stat-val">6</div><div class="stat-lbl">Test Types</div></div>
+  <div class="stat"><div class="stat-val">3</div><div class="stat-lbl">Trigger Modes</div></div>
+  <div class="stat"><div class="stat-val">Live</div><div class="stat-lbl">Real-time Metrics</div></div>
+  <div class="stat"><div class="stat-val">Auto</div><div class="stat-lbl">SLO Release Gate</div></div>
+  <div class="stat"><div class="stat-val">∞</div><div class="stat-lbl">Parallel Agents</div></div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     FRONTEND LAYER
+═══════════════════════════════════════ -->
+<div class="layer-block lb-fe">
+  <div class="layer-tab lt-fe">Frontend · React UI</div>
+  <div class="layer-inner">
+    <div class="layer-inner-label">7 Platform Modules — User-facing workflow</div>
+    <div class="flow-row">
+
+      <!-- 0 Dashboard -->
+      <div class="node n-0">
+        <div class="node-badge">0</div>
+        <span class="node-icon">🏠</span>
+        <div class="node-title">Dashboard</div>
+        <div class="node-sub">Health score · live status · recent runs</div>
+      </div>
+
+      <div class="arrow a-gray">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- 1 Test Authoring -->
+      <div class="node n-1">
+        <div class="node-badge">1</div>
+        <span class="node-icon">✍️</span>
+        <div class="node-title">Test Authoring</div>
+        <div class="node-sub">Build test · SLOs · load profile · checks</div>
+      </div>
+
+      <div class="arrow a-blue">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- 2 Test Suites -->
+      <div class="node n-2">
+        <div class="node-badge">2</div>
+        <span class="node-icon">📦</span>
+        <div class="node-title">Test Suites</div>
+        <div class="node-sub">Group &amp; organise related test specs</div>
+      </div>
+
+      <div class="arrow a-violet">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- 3 K6 Executor -->
+      <div class="k6-node">
+        <div class="k6-head">
+          <div class="k6-badge">3</div>
+          <span class="k6-icon">⚡</span>
+          <div>
+            <div class="k6-title">K6 Executor</div>
+            <div class="k6-sub">Run load tests · choose script source · select test type · set load profile</div>
+          </div>
+        </div>
+
+        <div class="k6-grid">
+          <div>
+            <div class="k6-group-label">3 Script Sources</div>
+            <div class="k6-chips">
+              <div class="k6-chip">🖥️ Visual Builder</div>
+              <div class="k6-chip">🤖 AI — plain English</div>
+              <div class="k6-chip">⌨️ Raw K6 Script</div>
+            </div>
+          </div>
+          <div>
+            <div class="k6-group-label">6 Test Types</div>
+            <div class="k6-chips">
+              <div class="k6-chip">💨 Smoke</div>
+              <div class="k6-chip">📈 Load</div>
+              <div class="k6-chip">🔥 Stress</div>
+              <div class="k6-chip">⚡ Spike</div>
+              <div class="k6-chip">🕐 Soak</div>
+              <div class="k6-chip">💥 Breakpoint</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="lp-label">Load Profile — Ramp Stages</div>
+        <div class="lp-bar">
+          <div class="lp-seg" style="flex:1; background:#34d399;">Ramp Up</div>
+          <div class="lp-seg" style="flex:2; background:#059669;">Steady State</div>
+          <div class="lp-seg" style="flex:1; background:#6ee7b7; color:#065f46;">Ramp Down</div>
+        </div>
+      </div>
+
+      <div class="arrow a-green">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- 4 Reports -->
+      <div class="node n-4">
+        <div class="node-badge">4</div>
+        <span class="node-icon">📋</span>
+        <div class="node-title">Reports</div>
+        <div class="node-sub">p50/p95/p99 · RPS · error rate · SLO results</div>
+      </div>
+
+      <div class="arrow a-pink">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- 5 Schedules -->
+      <div class="node n-5">
+        <div class="node-badge">5</div>
+        <span class="node-icon">🕐</span>
+        <div class="node-title">Schedules</div>
+        <div class="node-sub">Cron triggers · nightly automated runs</div>
+      </div>
+
+      <div class="arrow a-amber">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- 6 Notifications -->
+      <div class="node n-6">
+        <div class="node-badge">6</div>
+        <span class="node-icon">🔔</span>
+        <div class="node-title">Notifications</div>
+        <div class="node-sub">Breach alerts · SLO violations · run status</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     BACKEND LAYER
+═══════════════════════════════════════ -->
+<div class="layer-block lb-be">
+  <div class="layer-tab lt-be">Backend · Node.js API</div>
+  <div class="layer-inner">
+    <div class="layer-inner-label">Control plane services that power each frontend module</div>
+    <div class="flow-row">
+
+      <!-- Health API -->
+      <div class="be-node">
+        <span class="be-icon">📡</span>
+        <div class="be-title">Health &amp; Stats API</div>
+        <div class="be-sub">Aggregated metrics · integration health checks</div>
+      </div>
+
+      <div class="arrow a-gray">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- TestSpec Store -->
+      <div class="be-node">
+        <span class="be-icon">🗄️</span>
+        <div class="be-title">TestSpec Store</div>
+        <div class="be-sub">CRUD · PostgreSQL · Prisma ORM</div>
+      </div>
+
+      <div class="arrow a-blue">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- Suite Manager -->
+      <div class="be-node">
+        <span class="be-icon">📂</span>
+        <div class="be-title">Suite Manager</div>
+        <div class="be-sub">Group specs · manage test collections</div>
+      </div>
+
+      <div class="arrow a-violet">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- K6 Engine (wide) -->
+      <div class="be-node-wide">
+        <div class="be-wide-title"><span>⚙️</span> K6 Generator · Job Dispatcher · Exec Agent</div>
+        <div class="be-wide-steps">
+          <div class="be-wide-step">📜 TestSpec → K6 script generated</div>
+          <div class="be-wide-step">💉 InfluxDB boilerplate injected</div>
+          <div class="be-wide-step">📡 Job dispatched via WebSocket to agent</div>
+          <div class="be-wide-step">⚡ K6 binary spawned · VUs execute</div>
+          <div class="be-wide-step">📊 Metrics written live to InfluxDB</div>
+          <div class="be-wide-step">🔁 Stdout streamed back to browser</div>
+        </div>
+      </div>
+
+      <div class="arrow a-green">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- Reports API -->
+      <div class="be-node">
+        <span class="be-icon">📊</span>
+        <div class="be-title">Reports API</div>
+        <div class="be-sub">Execution records · SLO evaluation · threshold results</div>
+      </div>
+
+      <div class="arrow a-pink">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- Scheduler -->
+      <div class="be-node">
+        <span class="be-icon">🔁</span>
+        <div class="be-title">Scheduler Svc</div>
+        <div class="be-sub">Cron jobs · auto-dispatch · CI/CD API hook</div>
+      </div>
+
+      <div class="arrow a-amber">
+        <div class="arr-shaft"></div><div class="arr-tip"></div>
+      </div>
+
+      <!-- Notification -->
+      <div class="be-node">
+        <span class="be-icon">📣</span>
+        <div class="be-title">Notification Svc</div>
+        <div class="be-sub">Breach alerts · SLO events · delivery</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     INTEGRATIONS
+═══════════════════════════════════════ -->
+<div class="integrations-section">
+  <div class="section-title">Integrations &amp; Data Storage</div>
+  <div class="int-row">
+
+    <div class="int-card ic-influx">
+      <div class="int-icon">📈</div>
+      <div>
+        <div class="int-name">InfluxDB v2</div>
+        <div class="int-desc">Time-series database for all test metrics. Written in real-time by K6 virtual users during test execution via HTTP POST (in-band). Also receives aggregated post-run summary points from the backend.</div>
+        <div class="int-tags">
+          <span class="int-tag">requestsRaw</span>
+          <span class="int-tag">virtualUsers</span>
+          <span class="int-tag">testStartEnd</span>
+          <span class="int-tag">k6_http_*</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="int-card ic-grafana">
+      <div class="int-icon">📊</div>
+      <div>
+        <div class="int-name">Grafana</div>
+        <div class="int-desc">Real-time and historical dashboards sourced from InfluxDB. Embedded directly in the PerfOps UI via a backend proxy. Panels update live during test execution — no separate login required.</div>
+        <div class="int-tags">
+          <span class="int-tag">p50 / p95 / p99</span>
+          <span class="int-tag">RPS</span>
+          <span class="int-tag">Error Rate</span>
+          <span class="int-tag">VU Ramp</span>
+          <span class="int-tag">$runId Filter</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="int-card ic-pg">
+      <div class="int-icon">🗄️</div>
+      <div>
+        <div class="int-name">PostgreSQL · Local Storage</div>
+        <div class="int-desc">Primary relational data store. Holds all platform state including users, test specs, executions, agents, schedules, and notifications. Managed via Prisma ORM with full migration support.</div>
+        <div class="int-tags">
+          <span class="int-tag">Users</span>
+          <span class="int-tag">TestSpecs</span>
+          <span class="int-tag">Executions</span>
+          <span class="int-tag">Agents</span>
+          <span class="int-tag">Schedules</span>
+          <span class="int-tag">Notifications</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════
+     GATE & OUTCOMES
+═══════════════════════════════════════ -->
+<div style="margin-top:20px;">
+  <div class="section-title">Release Gate &amp; Outcomes</div>
+  <div class="gate-outcomes">
+    <div class="diamond-wrap">
+      <div class="diamond"><div class="diamond-txt">SLO<br>PASS?</div></div>
+      <div class="diamond-label">Auto Gate</div>
+    </div>
+    <div class="outcomes-row">
+      <div class="oc oc-pass">
+        <div class="oc-icon">✅</div>
+        <div>
+          <div class="oc-title">All SLOs Met — Release</div>
+          <div class="oc-desc">Deployment proceeds. Execution report archived. Performance trend updated for future comparison.</div>
+        </div>
+      </div>
+      <div class="oc oc-fail">
+        <div class="oc-icon">🚨</div>
+        <div>
+          <div class="oc-title">Threshold Breach — Block</div>
+          <div class="oc-desc">Deployment blocked. Team alerted via Notifications. Root cause investigated using Grafana dashboards.</div>
+        </div>
+      </div>
+      <div class="oc oc-iter">
+        <div class="oc-icon">🔄</div>
+        <div>
+          <div class="oc-title">Iterate &amp; Re-test</div>
+          <div class="oc-desc">Fix the bottleneck. Re-trigger from K6 Executor. Compare new results against baseline in Reports.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">PerfOps · Performance Testing as a Service · Confidential · &copy; 2025</div>
+
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npx tsx *)",
+      "Bash(sqlite3 /opt/homebrew/var/lib/grafana/grafana.db \"SELECT uid, title, slug FROM dashboard WHERE is_folder=0 LIMIT 20;\")",
+      "Bash(sqlite3 /opt/homebrew/var/lib/grafana/grafana.db \"SELECT login, password FROM user LIMIT 5;\")",
+      "Bash(cat /opt/homebrew/opt/grafana/share/grafana/conf/provisioning/dashboards/k6.yaml)",
+      "PowerShell($lines = Get-Content 'C:\\\\Temp\\\\PTaaS\\\\PTaaS\\\\PTaaS\\\\setup.ps1' -Encoding UTF8; $partial = \\($lines[0..252]\\) -join \"`n\"; $tokens = $null; $errors = $null; [System.Management.Automation.Language.Parser]::ParseInput\\($partial, [ref]$tokens, [ref]$errors\\) | Out-Null; $errors | ForEach-Object { \"Line $\\($_.Extent.StartLineNumber\\) col $\\($_.Extent.StartColumnNumber\\): $\\($_.Message\\)\" })",
+      "PowerShell(\\(Get-Command nvm\\).Source; Get-Content \"$env:APPDATA\\\\nvm\\\\settings.txt\" -ErrorAction SilentlyContinue; Get-Content \"C:\\\\nvm4w\\\\settings.txt\" -ErrorAction SilentlyContinue)"
+    ]
+  }
+}

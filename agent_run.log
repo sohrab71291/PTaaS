@@ -1,0 +1,12 @@
+
+> ptaas@1.0.0 agent:start
+> cd agent && npm start
+
+
+> ptaas-agent@1.0.0 start
+> tsx src/index.ts
+
+◇ injected env (3) from .env // tip: ⌘ override existing { override: true }
+[Agent] Starting — connecting to http://localhost:3001
+[Agent] Connected to control plane
+[JobHandler] Starting job cmqtgza260002ds9s3snxalyi

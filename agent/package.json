@@ -1,0 +1,25 @@
+{
+  "name": "ptaas-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PerfOps execution agent — runs K6 locally and streams results to the control plane",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx --watch src/index.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "pidusage": "^4.0.1",
+    "uuid": "^9.0.0",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/uuid": "^9.0.7",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}

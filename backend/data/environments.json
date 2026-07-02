@@ -1,0 +1,65 @@
+[
+  {
+    "id": "env-dev",
+    "name": "DEV",
+    "baseUrl": "https://dev-api.example.com",
+    "variables": [
+      { "key": "TIMEOUT", "value": "30000" },
+      { "key": "MAX_RETRIES", "value": "3" },
+      { "key": "LOG_LEVEL", "value": "debug" }
+    ],
+    "secrets": ["api_token"],
+    "requiresApproval": false,
+    "executionCount": 24,
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-05-01T00:00:00Z"
+  },
+  {
+    "id": "env-qa",
+    "name": "QA",
+    "baseUrl": "https://qa-api.example.com",
+    "variables": [
+      { "key": "TIMEOUT", "value": "20000" },
+      { "key": "MAX_RETRIES", "value": "2" },
+      { "key": "LOG_LEVEL", "value": "info" }
+    ],
+    "secrets": ["api_token", "db_password"],
+    "requiresApproval": false,
+    "executionCount": 87,
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-06-01T00:00:00Z"
+  },
+  {
+    "id": "env-stage",
+    "name": "STAGE",
+    "baseUrl": "https://stage-api.example.com",
+    "variables": [
+      { "key": "TIMEOUT", "value": "15000" },
+      { "key": "MAX_RETRIES", "value": "1" },
+      { "key": "LOG_LEVEL", "value": "warn" },
+      { "key": "RATE_LIMIT", "value": "1000" }
+    ],
+    "secrets": ["api_token", "db_password", "jwt_secret"],
+    "requiresApproval": false,
+    "executionCount": 43,
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-05-20T00:00:00Z"
+  },
+  {
+    "id": "env-prod",
+    "name": "PROD",
+    "baseUrl": "https://api.example.com",
+    "variables": [
+      { "key": "TIMEOUT", "value": "10000" },
+      { "key": "MAX_RETRIES", "value": "0" },
+      { "key": "LOG_LEVEL", "value": "error" },
+      { "key": "RATE_LIMIT", "value": "500" },
+      { "key": "CIRCUIT_BREAKER", "value": "true" }
+    ],
+    "secrets": ["api_token", "db_password", "jwt_secret", "oauth_client_secret", "webhook_signing_key"],
+    "requiresApproval": true,
+    "executionCount": 8,
+    "createdAt": "2026-01-01T00:00:00Z",
+    "updatedAt": "2026-05-15T00:00:00Z"
+  }
+]

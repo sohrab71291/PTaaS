@@ -1,0 +1,14 @@
+[
+  {
+    "id": "62335bc2-e80c-4462-9412-cf32e27b6b6d",
+    "name": "TestAlertEmail",
+    "type": "email",
+    "trigger": "always",
+    "emailRecipients": [
+      "sohrab.dutta@trantorinc.com"
+    ],
+    "teamsWebhookUrl": null,
+    "enabled": true,
+    "createdAt": "2026-06-12T08:26:35.141Z"
+  }
+]

@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  TESTER
+  VIEWER
+}
+
+enum AgentStatus {
+  online
+  offline
+  busy
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         Role     @default(TESTER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model TestSpec {
+  id            String      @id @default(cuid())
+  name          String
+  description   String?
+  tags          String[]
+  request       Json
+  loadProfile   Json
+  thresholds    Json
+  checks        String[]
+  environmentId   String?
+  generatedScript String?
+  slos            Json      @default("[]")
+  testType        String?
+  complexity      String?
+  envVars         Json      @default("[]")
+  lastRunStatus   String?
+  lastRunAt     DateTime?
+  scheduledAt   DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  executions    Execution[]
+}
+
+model Execution {
+  id                 String    @id @default(cuid())
+  specId             String?
+  spec               TestSpec? @relation(fields: [specId], references: [id])
+  specName           String
+  environment        String
+  status             String    @default("queued")
+  triggeredBy        String
+  startedAt          DateTime?
+  finishedAt         DateTime?
+  scheduledFor       DateTime?
+  duration           Int?
+  metrics            Json?
+  thresholdBreaches  Int       @default(0)
+  checksPassed       Int       @default(0)
+  checksFailed       Int       @default(0)
+  thresholdResults   Json      @default("[]")
+  checkResults       Json      @default("[]")
+  responseTimeSeries Json      @default("[]")
+  slos               Json      @default("[]")
+  sloResults         Json      @default("{}")
+  agentId            String?
+  agent              Agent?    @relation(fields: [agentId], references: [id])
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+model Environment {
+  id               String   @id @default(cuid())
+  name             String
+  baseUrl          String
+  variables        Json     @default("[]")
+  secrets          String[]
+  requiresApproval Boolean  @default(false)
+  executionCount   Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+model Secret {
+  id           String    @id @default(cuid())
+  name         String
+  backend      String
+  backendPath  String
+  environments String[]
+  lastRotated  DateTime  @default(now())
+  expiresAt    DateTime?
+  status       String    @default("active")
+  createdAt    DateTime  @default(now())
+}
+
+model Agent {
+  id         String      @id @default(cuid())
+  name       String
+  apiKey     String      @unique
+  status     AgentStatus @default(offline)
+  hostname   String?
+  lastSeen   DateTime?
+  k6Version  String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  executions Execution[]
+}

@@ -1,0 +1,328 @@
+[
+  {
+    "id": "exec-001",
+    "specId": "spec-001",
+    "specName": "Search_API_Load_Test",
+    "environment": "QA",
+    "status": "pass",
+    "triggeredBy": "jane.smith@example.com",
+    "startedAt": "2026-06-01T10:00:00Z",
+    "finishedAt": "2026-06-01T10:11:00Z",
+    "duration": 660,
+    "metrics": {
+      "p50": 180,
+      "p90": 340,
+      "p95": 420,
+      "p99": 680,
+      "errorRate": 0.002,
+      "rps": 87.4,
+      "maxVUs": 100,
+      "totalRequests": 57685
+    },
+    "thresholdBreaches": 0,
+    "checksPassed": 3,
+    "checksFailed": 0,
+    "thresholdResults": [
+      { "metric": "http_req_duration", "condition": "p(95)<500", "actual": "420ms", "passed": true },
+      { "metric": "http_req_failed", "condition": "rate<0.01", "actual": "0.2%", "passed": true }
+    ],
+    "checkResults": [
+      { "name": "status is 200", "passed": true, "passRate": 99.8 },
+      { "name": "response time < 500ms", "passed": true, "passRate": 96.2 },
+      { "name": "response has results field", "passed": true, "passRate": 99.9 }
+    ],
+    "responseTimeSeries": [
+      { "time": "0:00", "p50": 150, "p95": 320 },
+      { "time": "1:00", "p50": 165, "p95": 380 },
+      { "time": "2:00", "p50": 180, "p95": 420 },
+      { "time": "3:00", "p50": 195, "p95": 460 },
+      { "time": "4:00", "p50": 185, "p95": 440 },
+      { "time": "5:00", "p50": 178, "p95": 410 },
+      { "time": "6:00", "p50": 182, "p95": 415 },
+      { "time": "7:00", "p50": 170, "p95": 390 },
+      { "time": "8:00", "p50": 168, "p95": 385 },
+      { "time": "9:00", "p50": 155, "p95": 350 },
+      { "time": "10:00", "p50": 140, "p95": 310 }
+    ]
+  },
+  {
+    "id": "exec-002",
+    "specId": "spec-002",
+    "specName": "Cart_Load",
+    "environment": "QA",
+    "status": "fail",
+    "triggeredBy": "john.doe@example.com",
+    "startedAt": "2026-05-31T14:00:00Z",
+    "finishedAt": "2026-05-31T14:06:00Z",
+    "duration": 360,
+    "metrics": {
+      "p50": 320,
+      "p90": 620,
+      "p95": 780,
+      "p99": 1200,
+      "errorRate": 0.035,
+      "rps": 142.1,
+      "maxVUs": 200,
+      "totalRequests": 51156
+    },
+    "thresholdBreaches": 2,
+    "checksPassed": 1,
+    "checksFailed": 1,
+    "thresholdResults": [
+      { "metric": "http_req_duration", "condition": "p(95)<400", "actual": "780ms", "passed": false },
+      { "metric": "http_req_failed", "condition": "rate<0.05", "actual": "3.5%", "passed": true }
+    ],
+    "checkResults": [
+      { "name": "status is 200", "passed": true, "passRate": 96.5 },
+      { "name": "cart updated", "passed": false, "passRate": 88.3 }
+    ],
+    "responseTimeSeries": [
+      { "time": "0:00", "p50": 200, "p95": 380 },
+      { "time": "1:00", "p50": 280, "p95": 520 },
+      { "time": "2:00", "p50": 360, "p95": 720 },
+      { "time": "3:00", "p50": 390, "p95": 820 },
+      { "time": "4:00", "p50": 350, "p95": 780 },
+      { "time": "5:00", "p50": 280, "p95": 610 }
+    ]
+  },
+  {
+    "id": "exec-003",
+    "specId": "spec-003",
+    "specName": "Login_Stress",
+    "environment": "STAGE",
+    "status": "pass",
+    "triggeredBy": "jane.smith@example.com",
+    "startedAt": "2026-05-30T16:30:00Z",
+    "finishedAt": "2026-05-30T16:33:00Z",
+    "duration": 180,
+    "metrics": {
+      "p50": 210,
+      "p90": 480,
+      "p95": 590,
+      "p99": 920,
+      "errorRate": 0.008,
+      "rps": 310.5,
+      "maxVUs": 500,
+      "totalRequests": 55890
+    },
+    "thresholdBreaches": 0,
+    "checksPassed": 2,
+    "checksFailed": 0,
+    "thresholdResults": [
+      { "metric": "http_req_duration", "condition": "p(95)<1000", "actual": "590ms", "passed": true },
+      { "metric": "http_req_failed", "condition": "rate<0.02", "actual": "0.8%", "passed": true }
+    ],
+    "checkResults": [
+      { "name": "status is 200", "passed": true, "passRate": 99.2 },
+      { "name": "has token in response", "passed": true, "passRate": 99.2 }
+    ],
+    "responseTimeSeries": [
+      { "time": "0:00", "p50": 180, "p95": 350 },
+      { "time": "0:30", "p50": 200, "p95": 480 },
+      { "time": "1:00", "p50": 230, "p95": 590 },
+      { "time": "1:30", "p50": 250, "p95": 650 },
+      { "time": "2:00", "p50": 220, "p95": 580 },
+      { "time": "2:30", "p50": 190, "p95": 420 }
+    ]
+  },
+  {
+    "id": "exec-004",
+    "specId": "spec-004",
+    "specName": "Checkout_API_Stress",
+    "environment": "STAGE",
+    "status": "running",
+    "triggeredBy": "john.doe@example.com",
+    "startedAt": "2026-06-01T09:45:00Z",
+    "finishedAt": null,
+    "duration": null,
+    "metrics": {
+      "p50": 450,
+      "p90": 980,
+      "p95": 1240,
+      "p99": null,
+      "errorRate": 0.005,
+      "rps": 45.2,
+      "maxVUs": 300,
+      "totalRequests": 12400
+    },
+    "thresholdBreaches": 0,
+    "checksPassed": 3,
+    "checksFailed": 0,
+    "thresholdResults": [],
+    "checkResults": [],
+    "responseTimeSeries": []
+  },
+  {
+    "id": "exec-005",
+    "specId": "spec-001",
+    "specName": "Search_API_Load_Test",
+    "environment": "QA",
+    "status": "pass",
+    "triggeredBy": "ci-pipeline",
+    "startedAt": "2026-05-31T06:00:00Z",
+    "finishedAt": "2026-05-31T06:11:00Z",
+    "duration": 660,
+    "metrics": {
+      "p50": 175,
+      "p90": 330,
+      "p95": 410,
+      "p99": 650,
+      "errorRate": 0.001,
+      "rps": 89.2,
+      "maxVUs": 100,
+      "totalRequests": 58872
+    },
+    "thresholdBreaches": 0,
+    "checksPassed": 3,
+    "checksFailed": 0,
+    "thresholdResults": [
+      { "metric": "http_req_duration", "condition": "p(95)<500", "actual": "410ms", "passed": true },
+      { "metric": "http_req_failed", "condition": "rate<0.01", "actual": "0.1%", "passed": true }
+    ],
+    "checkResults": [
+      { "name": "status is 200", "passed": true, "passRate": 99.9 },
+      { "name": "response time < 500ms", "passed": true, "passRate": 97.1 },
+      { "name": "response has results field", "passed": true, "passRate": 100 }
+    ],
+    "responseTimeSeries": []
+  },
+  {
+    "id": "exec-006",
+    "specId": "spec-003",
+    "specName": "Login_Stress",
+    "environment": "STAGE",
+    "status": "pass",
+    "triggeredBy": "ci-pipeline",
+    "startedAt": "2026-05-29T06:00:00Z",
+    "finishedAt": "2026-05-29T06:03:30Z",
+    "duration": 210,
+    "metrics": {
+      "p50": 198,
+      "p90": 460,
+      "p95": 570,
+      "p99": 890,
+      "errorRate": 0.006,
+      "rps": 298.4,
+      "maxVUs": 500,
+      "totalRequests": 62664
+    },
+    "thresholdBreaches": 0,
+    "checksPassed": 2,
+    "checksFailed": 0,
+    "thresholdResults": [
+      { "metric": "http_req_duration", "condition": "p(95)<1000", "actual": "570ms", "passed": true },
+      { "metric": "http_req_failed", "condition": "rate<0.02", "actual": "0.6%", "passed": true }
+    ],
+    "checkResults": [
+      { "name": "status is 200", "passed": true, "passRate": 99.4 },
+      { "name": "has token in response", "passed": true, "passRate": 99.4 }
+    ],
+    "responseTimeSeries": []
+  },
+  {
+    "id": "exec-007",
+    "specId": "spec-002",
+    "specName": "Cart_Load",
+    "environment": "QA",
+    "status": "fail",
+    "triggeredBy": "jane.smith@example.com",
+    "startedAt": "2026-05-28T14:00:00Z",
+    "finishedAt": "2026-05-28T14:06:00Z",
+    "duration": 360,
+    "metrics": {
+      "p50": 290,
+      "p90": 580,
+      "p95": 730,
+      "p99": 1100,
+      "errorRate": 0.042,
+      "rps": 138.7,
+      "maxVUs": 200,
+      "totalRequests": 50000
+    },
+    "thresholdBreaches": 1,
+    "checksPassed": 1,
+    "checksFailed": 1,
+    "thresholdResults": [
+      { "metric": "http_req_duration", "condition": "p(95)<400", "actual": "730ms", "passed": false },
+      { "metric": "http_req_failed", "condition": "rate<0.05", "actual": "4.2%", "passed": true }
+    ],
+    "checkResults": [
+      { "name": "status is 200", "passed": true, "passRate": 95.8 },
+      { "name": "cart updated", "passed": false, "passRate": 90.1 }
+    ],
+    "responseTimeSeries": []
+  },
+  {
+    "id": "exec-008",
+    "specId": "spec-001",
+    "specName": "Search_API_Load_Test",
+    "environment": "QA",
+    "status": "pass",
+    "triggeredBy": "ci-pipeline",
+    "startedAt": "2026-05-27T06:00:00Z",
+    "finishedAt": "2026-05-27T06:11:00Z",
+    "duration": 660,
+    "metrics": {
+      "p50": 182,
+      "p90": 345,
+      "p95": 425,
+      "p99": 670,
+      "errorRate": 0.002,
+      "rps": 86.8,
+      "maxVUs": 100,
+      "totalRequests": 57288
+    },
+    "thresholdBreaches": 0,
+    "checksPassed": 3,
+    "checksFailed": 0,
+    "thresholdResults": [],
+    "checkResults": [],
+    "responseTimeSeries": []
+  },
+  {
+    "id": "exec-009",
+    "specId": "spec-001",
+    "specName": "Search_API_Load_Test",
+    "environment": "QA",
+    "status": "pass",
+    "triggeredBy": "john.doe@example.com",
+    "startedAt": "2026-05-26T10:00:00Z",
+    "finishedAt": "2026-05-26T10:11:00Z",
+    "duration": 660,
+    "metrics": {
+      "p50": 176,
+      "p90": 335,
+      "p95": 415,
+      "p99": 655,
+      "errorRate": 0.001,
+      "rps": 88.5,
+      "maxVUs": 100,
+      "totalRequests": 58410
+    },
+    "thresholdBreaches": 0,
+    "checksPassed": 3,
+    "checksFailed": 0,
+    "thresholdResults": [],
+    "checkResults": [],
+    "responseTimeSeries": []
+  },
+  {
+    "id": "exec-010",
+    "specId": "spec-005",
+    "specName": "Product_Search_Load",
+    "environment": "PROD",
+    "status": "scheduled",
+    "triggeredBy": "scheduler",
+    "startedAt": null,
+    "finishedAt": null,
+    "scheduledFor": "2026-06-02T02:00:00Z",
+    "duration": null,
+    "metrics": null,
+    "thresholdBreaches": 0,
+    "checksPassed": 0,
+    "checksFailed": 0,
+    "thresholdResults": [],
+    "checkResults": [],
+    "responseTimeSeries": []
+  }
+]

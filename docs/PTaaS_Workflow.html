@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>PerfOps PTaaS — End-to-End Workflow</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0d0f18;
+  color: #e2e8f0;
+  min-height: 100vh;
+  padding: 0;
+}
+
+.page { padding: 20px 24px 32px; max-width: 1100px; margin: 0 auto; }
+
+/* ── Header ── */
+.hdr { text-align:center; margin-bottom: 28px; }
+.hdr h1 { font-size:16px; font-weight:700; color:#f1f5f9; letter-spacing:.3px; }
+.hdr p { font-size:10px; color:#475569; margin-top:4px; }
+.hdr-pills { display:flex; gap:8px; justify-content:center; margin-top:10px; flex-wrap:wrap; }
+.pill { font-size:9px; padding:3px 10px; border-radius:20px; border:1px solid; font-weight:600; }
+.pill-b { border-color:#3b82f6; color:#93c5fd; background:rgba(59,130,246,.1); }
+.pill-p { border-color:#a855f7; color:#d8b4fe; background:rgba(168,85,247,.1); }
+.pill-g { border-color:#22c55e; color:#86efac; background:rgba(34,197,94,.1); }
+
+/* ── Flow canvas ── */
+.flow { display: flex; flex-direction: column; gap: 0; position: relative; }
+
+/* ── Phase group ── */
+.phase-group { margin-bottom: 6px; }
+.phase-label { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.phase-num {
+  width: 26px; height: 26px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800; flex-shrink: 0;
+}
+.phase-title { font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; }
+.phase-line { flex: 1; height: 1px; }
+
+.ph1 .phase-num { background:#1e3a5f; color:#60a5fa; border:1px solid #1d4ed8; }
+.ph1 .phase-title { color:#60a5fa; }
+.ph1 .phase-line { background:linear-gradient(to right,#1d4ed8,transparent); }
+.ph2 .phase-num { background:#2d1b69; color:#c084fc; border:1px solid #7c3aed; }
+.ph2 .phase-title { color:#c084fc; }
+.ph2 .phase-line { background:linear-gradient(to right,#7c3aed,transparent); }
+.ph3 .phase-num { background:#44280c; color:#fcd34d; border:1px solid #b45309; }
+.ph3 .phase-title { color:#fcd34d; }
+.ph3 .phase-line { background:linear-gradient(to right,#b45309,transparent); }
+.ph4 .phase-num { background:#14381f; color:#34d399; border:1px solid #047857; }
+.ph4 .phase-title { color:#34d399; }
+.ph4 .phase-line { background:linear-gradient(to right,#047857,transparent); }
+.ph5 .phase-num { background:#082f49; color:#67e8f9; border:1px solid #0e7490; }
+.ph5 .phase-title { color:#67e8f9; }
+.ph5 .phase-line { background:linear-gradient(to right,#0e7490,transparent); }
+.ph6 .phase-num { background:#4a0020; color:#f9a8d4; border:1px solid #be185d; }
+.ph6 .phase-title { color:#f9a8d4; }
+.ph6 .phase-line { background:linear-gradient(to right,#be185d,transparent); }
+
+/* ── Step row ── */
+.steps-row {
+  display: flex; align-items: center; gap: 0;
+  padding-left: 36px; flex-wrap: nowrap;
+  overflow-x: auto; padding-bottom: 4px;
+}
+
+/* ── Step card ── */
+.step {
+  flex-shrink: 0; border-radius: 8px; border: 1px solid;
+  padding: 10px 12px; width: 148px; position: relative;
+  cursor: pointer; transition: transform .13s, box-shadow .13s;
+}
+.step:hover { transform: translateY(-3px); box-shadow: 0 8px 24px rgba(0,0,0,.5); }
+.step.active { outline: 2px solid #fff; outline-offset: 2px; z-index: 5; }
+.step-actor { font-size: 8px; font-weight: 700; letter-spacing: .5px; text-transform: uppercase; margin-bottom: 5px; display: flex; align-items: center; gap: 4px; }
+.step-icon { font-size: 12px; }
+.step-title { font-size: 11px; font-weight: 700; line-height: 1.3; margin-bottom: 3px; }
+.step-sub { font-size: 9px; color: #64748b; line-height: 1.5; }
+.step-tag { position: absolute; top: -8px; right: 8px; font-size: 8px; padding: 1px 7px; border-radius: 10px; font-weight: 700; letter-spacing: .3px; }
+
+.s-user  { border-color:#374151; background:rgba(55,65,81,.2); }
+.s-user .step-title { color:#d1d5db; }
+.s-user .step-actor { color:#6b7280; }
+.s-user .step-tag { background:#1f2937; color:#9ca3af; border:1px solid #374151; }
+
+.s-fe    { border-color:#1d4ed8; background:rgba(29,78,216,.15); }
+.s-fe .step-title { color:#93c5fd; }
+.s-fe .step-actor { color:#3b82f6; }
+.s-fe .step-tag { background:#1e3a5f; color:#93c5fd; border:1px solid #1d4ed8; }
+
+.s-be    { border-color:#6d28d9; background:rgba(109,40,217,.15); }
+.s-be .step-title { color:#c4b5fd; }
+.s-be .step-actor { color:#8b5cf6; }
+.s-be .step-tag { background:#2e1065; color:#c4b5fd; border:1px solid #6d28d9; }
+
+.s-ai    { border-color:#be185d; background:rgba(190,24,93,.15); }
+.s-ai .step-title { color:#f9a8d4; }
+.s-ai .step-actor { color:#ec4899; }
+.s-ai .step-tag { background:#4a0020; color:#f9a8d4; border:1px solid #be185d; }
+
+.s-agent { border-color:#b45309; background:rgba(180,83,9,.15); }
+.s-agent .step-title { color:#fcd34d; }
+.s-agent .step-actor { color:#f59e0b; }
+.s-agent .step-tag { background:#451a03; color:#fcd34d; border:1px solid #b45309; }
+
+.s-data  { border-color:#047857; background:rgba(4,120,87,.15); }
+.s-data .step-title { color:#6ee7b7; }
+.s-data .step-actor { color:#10b981; }
+.s-data .step-tag { background:#052e16; color:#6ee7b7; border:1px solid #047857; }
+
+.s-teal  { border-color:#0e7490; background:rgba(14,116,144,.15); }
+.s-teal .step-title { color:#67e8f9; }
+.s-teal .step-actor { color:#06b6d4; }
+.s-teal .step-tag { background:#082f49; color:#67e8f9; border:1px solid #0e7490; }
+
+/* ── Arrow ── */
+.arrow { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; width: 32px; gap: 2px; }
+.arrow-body { height: 1px; width: 100%; }
+.arrow-head { width: 0; height: 0; border-top: 4px solid transparent; border-bottom: 4px solid transparent; align-self: flex-end; }
+.arrow-lbl { font-size: 7px; text-align: center; line-height: 1.3; white-space: nowrap; }
+
+.arr-gray   .arrow-body { background:#374151; } .arr-gray   .arrow-head { border-left:6px solid #374151; } .arr-gray   .arrow-lbl { color:#4b5563; }
+.arr-blue   .arrow-body { background:#1d4ed8; } .arr-blue   .arrow-head { border-left:6px solid #1d4ed8; } .arr-blue   .arrow-lbl { color:#3b82f6; }
+.arr-purple .arrow-body { background:#6d28d9; } .arr-purple .arrow-head { border-left:6px solid #6d28d9; } .arr-purple .arrow-lbl { color:#8b5cf6; }
+.arr-amber  .arrow-body { background:#b45309; } .arr-amber  .arrow-head { border-left:6px solid #b45309; } .arr-amber  .arrow-lbl { color:#f59e0b; }
+.arr-green  .arrow-body { background:#047857; } .arr-green  .arrow-head { border-left:6px solid #047857; } .arr-green  .arrow-lbl { color:#10b981; }
+.arr-teal   .arrow-body { background:#0e7490; } .arr-teal   .arrow-head { border-left:6px solid #0e7490; } .arr-teal   .arrow-lbl { color:#06b6d4; }
+.arr-pink   .arrow-body { background:#be185d; } .arr-pink   .arrow-head { border-left:6px solid #be185d; } .arr-pink   .arrow-lbl { color:#ec4899; }
+
+/* ── Decision diamond ── */
+.diamond-wrap { flex-shrink: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; width: 80px; }
+.diamond { width: 56px; height: 56px; transform: rotate(45deg); border: 1px solid #b45309; background: rgba(180,83,9,.18); display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform .13s; flex-shrink: 0; }
+.diamond:hover { transform: rotate(45deg) scale(1.08); }
+.diamond-txt { transform: rotate(-45deg); font-size: 8px; font-weight: 700; color: #fcd34d; text-align: center; line-height: 1.3; white-space: nowrap; }
+.diamond-yes { font-size: 7px; color: #10b981; margin-top: 2px; }
+.diamond-no  { font-size: 7px; color: #ef4444; }
+
+/* ── Phase connector ── */
+.phase-connector { display: flex; align-items: center; padding-left: 36px; margin: 6px 0; gap: 6px; }
+.pc-line { flex: 1; height: 1px; border-top: 1px dashed #1e2336; }
+.pc-dot  { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.pc-label { font-size: 8px; color: #374151; white-space: nowrap; }
+
+/* ── Detail panel ── */
+.detail { border: 1px solid #1e2336; border-radius: 8px; background: #090b12; margin-top: 20px; display: none; overflow: hidden; }
+.detail.open { display: block; }
+.detail-hdr { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: #0f1220; border-bottom: 1px solid #1e2336; }
+.detail-hdr h3 { font-size: 12px; font-weight: 700; color: #f1f5f9; }
+.detail-close { background: none; border: 1px solid #374151; color: #9ca3af; border-radius: 4px; padding: 2px 9px; font-size: 9px; cursor: pointer; }
+.detail-close:hover { background: #1f2937; }
+.detail-body { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; }
+.detail-col { padding: 14px 16px; border-right: 1px solid #1e2336; }
+.detail-col:last-child { border-right: none; }
+.detail-col h4 { font-size: 10px; font-weight: 700; color: #94a3b8; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+.detail-col p { font-size: 10px; color: #64748b; line-height: 1.8; }
+.detail-col p strong { color: #e2e8f0; font-weight: 600; }
+.detail-col code { font-size: 9px; color: #c4b5fd; background: rgba(109,40,217,.2); padding: 1px 4px; border-radius: 3px; }
+
+/* ── Legend ── */
+.legend { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 9px; color: #64748b; }
+.legend-dot { width: 8px; height: 8px; border-radius: 2px; }
+
+/* ── Tooltip ── */
+.tip { position: fixed; z-index: 999; background: #111827; border: 1px solid #374151; border-radius: 6px; padding: 6px 10px; font-size: 9px; color: #94a3b8; pointer-events: none; display: none; box-shadow: 0 6px 20px rgba(0,0,0,.6); }
+.tip.show { display: block; }
+
+/* ── Download bar ── */
+.dl-bar { display:flex; align-items:center; justify-content:space-between; padding:8px 14px; background:#0a0c14; border-bottom:1px solid #1e2336; }
+.dl-bar span { font-size:10px; color:#475569; }
+.dl-btn { font-size:10px; padding:5px 14px; border-radius:6px; border:1px solid #374151; background:#1f2937; color:#d1d5db; cursor:pointer; font-weight:600; }
+.dl-btn:hover { background:#374151; }
+</style>
+</head>
+<body>
+
+<div class="dl-bar">
+  <span>PerfOps PTaaS · End-to-End Workflow · Confidential</span>
+  <button class="dl-btn" onclick="window.print()">🖨️ Print / Save as PDF</button>
+</div>
+
+<div class="page">
+
+<div class="hdr">
+  <h1>PerfOps PTaaS — End-to-End Workflow</h1>
+  <p>Sequential process flow from test creation to reporting · Click any step to see details</p>
+  <div class="hdr-pills">
+    <span class="pill pill-b">Technical Lead &amp; CTO</span>
+    <span class="pill pill-p">QA Managers</span>
+    <span class="pill pill-g">Platform Engineering</span>
+  </div>
+</div>
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#6b7280"></div> User Action</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> Frontend UI</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> Control Plane API</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ec4899"></div> AI (Claude)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div> Execution Agent</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div> Data Store</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#06b6d4"></div> Observability</div>
+</div>
+
+<div class="flow">
+
+  <!-- PHASE 1 -->
+  <div class="phase-group ph1">
+    <div class="phase-label">
+      <div class="phase-num">1</div>
+      <div class="phase-title">Test Authoring</div>
+      <div class="phase-line"></div>
+    </div>
+    <div class="steps-row">
+      <div class="step s-user" data-id="s1">
+        <span class="step-tag">Start</span>
+        <div class="step-actor"><span class="step-icon">👤</span> QA Engineer</div>
+        <div class="step-title">Define Test Goal</div>
+        <div class="step-sub">Choose target endpoint, load shape, SLO targets</div>
+      </div>
+      <div class="arrow arr-gray"><div class="arrow-body"></div><div class="arrow-head"></div><div class="arrow-lbl">chooses<br>method</div></div>
+      <div class="diamond-wrap" data-id="d1">
+        <div class="diamond"><div class="diamond-txt">Script<br>Source?</div></div>
+        <div class="diamond-yes">↓ Visual / CSV / AI / Raw</div>
+      </div>
+      <div class="arrow arr-blue"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-fe" data-id="s2">
+        <span class="step-tag">Frontend</span>
+        <div class="step-actor"><span class="step-icon">🖥️</span> Test Builder UI</div>
+        <div class="step-title">Author Test Spec</div>
+        <div class="step-sub">URL · headers · load stages · thresholds · SLOs · checks</div>
+      </div>
+      <div class="arrow arr-pink"><div class="arrow-body"></div><div class="arrow-head"></div><div class="arrow-lbl">or AI prompt</div></div>
+      <div class="step s-ai" data-id="s3">
+        <span class="step-tag">Claude Opus</span>
+        <div class="step-actor"><span class="step-icon">🤖</span> AI Layer</div>
+        <div class="step-title">Generate K6 Script</div>
+        <div class="step-sub">Natural language → complete K6 JS via SSE stream</div>
+      </div>
+      <div class="arrow arr-purple"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-be" data-id="s4">
+        <span class="step-tag">Control Plane</span>
+        <div class="step-actor"><span class="step-icon">⚙️</span> API Server</div>
+        <div class="step-title">Persist TestSpec</div>
+        <div class="step-sub">PostgreSQL via Prisma · request, loadProfile, thresholds</div>
+      </div>
+      <div class="arrow arr-green"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-data" data-id="s5">
+        <span class="step-tag">PostgreSQL</span>
+        <div class="step-actor"><span class="step-icon">🗄️</span> Data Store</div>
+        <div class="step-title">TestSpec Saved</div>
+        <div class="step-sub">id · name · loadProfile · thresholds · environmentId</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-connector"><div class="pc-dot" style="background:#1d4ed8"></div><div class="pc-label">TestSpec stored → ready to configure</div><div class="pc-line"></div></div>
+
+  <!-- PHASE 2 -->
+  <div class="phase-group ph2">
+    <div class="phase-label">
+      <div class="phase-num">2</div>
+      <div class="phase-title">Configure Environment</div>
+      <div class="phase-line"></div>
+    </div>
+    <div class="steps-row">
+      <div class="step s-user" data-id="s6">
+        <span class="step-tag">DevOps / Admin</span>
+        <div class="step-actor"><span class="step-icon">🔧</span> Platform Team</div>
+        <div class="step-title">Set Target Env</div>
+        <div class="step-sub">Base URL, env variables, approval gate flag</div>
+      </div>
+      <div class="arrow arr-blue"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-fe" data-id="s7">
+        <span class="step-tag">Frontend</span>
+        <div class="step-actor"><span class="step-icon">🖥️</span> Environments UI</div>
+        <div class="step-title">Register Secret Refs</div>
+        <div class="step-sub">Vault path references, token names — no raw values stored</div>
+      </div>
+      <div class="arrow arr-purple"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-be" data-id="s8">
+        <span class="step-tag">Control Plane</span>
+        <div class="step-actor"><span class="step-icon">⚙️</span> Config API</div>
+        <div class="step-title">Store Config</div>
+        <div class="step-sub">Environment · Secret · Agent records in PostgreSQL</div>
+      </div>
+      <div class="arrow arr-purple"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-be" data-id="s9">
+        <span class="step-tag">Agent Registry</span>
+        <div class="step-actor"><span class="step-icon">📡</span> Agent Service</div>
+        <div class="step-title">Agent Connects</div>
+        <div class="step-sub">WS to /ws/agent/:id · registers + heartbeat every 15s</div>
+      </div>
+      <div class="arrow arr-green"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-data" data-id="s10">
+        <span class="step-tag">PostgreSQL</span>
+        <div class="step-actor"><span class="step-icon">🗄️</span> Data Store</div>
+        <div class="step-title">Config Persisted</div>
+        <div class="step-sub">Env vars · secret paths · agent status = online</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-connector"><div class="pc-dot" style="background:#7c3aed"></div><div class="pc-label">Environment ready · agent online → trigger the run</div><div class="pc-line"></div></div>
+
+  <!-- PHASE 3 -->
+  <div class="phase-group ph3">
+    <div class="phase-label">
+      <div class="phase-num">3</div>
+      <div class="phase-title">Trigger Execution</div>
+      <div class="phase-line"></div>
+    </div>
+    <div class="steps-row">
+      <div class="step s-user" data-id="s11">
+        <span class="step-tag">QA / CI/CD</span>
+        <div class="step-actor"><span class="step-icon">▶️</span> User / Pipeline</div>
+        <div class="step-title">Initiate Run</div>
+        <div class="step-sub">Manual · cron schedule · CI/CD API call with Bearer JWT</div>
+      </div>
+      <div class="arrow arr-blue"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-be" data-id="s12">
+        <span class="step-tag">K6 Generator</span>
+        <div class="step-actor"><span class="step-icon">⚙️</span> Control Plane</div>
+        <div class="step-title">Build K6 Script</div>
+        <div class="step-sub">TestSpec → JS · inject InfluxDB boilerplate · validate export</div>
+      </div>
+      <div class="arrow arr-purple"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-be" data-id="s13">
+        <span class="step-tag">Job Dispatcher</span>
+        <div class="step-actor"><span class="step-icon">📨</span> Dispatch Service</div>
+        <div class="step-title">Pick Agent &amp; Dispatch</div>
+        <div class="step-sub">Pick online agent · inject INFLUX_V2_* vars · send dispatch_job</div>
+      </div>
+      <div class="arrow arr-green"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-data" data-id="s14">
+        <span class="step-tag">PostgreSQL</span>
+        <div class="step-actor"><span class="step-icon">🗄️</span> Data Store</div>
+        <div class="step-title">Execution Created</div>
+        <div class="step-sub">Status = running · specId · agentId · startedAt</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-connector"><div class="pc-dot" style="background:#b45309"></div><div class="pc-label">dispatch_job sent over WebSocket → agent picks up the job</div><div class="pc-line"></div></div>
+
+  <!-- PHASE 4 -->
+  <div class="phase-group ph4">
+    <div class="phase-label">
+      <div class="phase-num">4</div>
+      <div class="phase-title">Execute Load Test</div>
+      <div class="phase-line"></div>
+    </div>
+    <div class="steps-row">
+      <div class="step s-agent" data-id="s15">
+        <span class="step-tag">Agent</span>
+        <div class="step-actor"><span class="step-icon">🤖</span> Exec Agent</div>
+        <div class="step-title">Accept Job</div>
+        <div class="step-sub">Validate script · inject load profile · send job_accepted</div>
+      </div>
+      <div class="arrow arr-amber"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-agent" data-id="s16">
+        <span class="step-tag">K6 Runner</span>
+        <div class="step-actor"><span class="step-icon">⚡</span> Child Process</div>
+        <div class="step-title">Spawn K6 Binary</div>
+        <div class="step-sub">k6 run script.js · env vars injected · VUs ramping up</div>
+      </div>
+      <div class="arrow arr-amber"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-agent" data-id="s17">
+        <span class="step-tag">VU Execution</span>
+        <div class="step-actor"><span class="step-icon">👥</span> Virtual Users</div>
+        <div class="step-title">Run Scenarios</div>
+        <div class="step-sub">HTTP calls to target · SLO checks · threshold assertions</div>
+      </div>
+      <div class="arrow arr-teal"><div class="arrow-body"></div><div class="arrow-head"></div><div class="arrow-lbl">in-band<br>HTTP POST</div></div>
+      <div class="step s-teal" data-id="s18">
+        <span class="step-tag">InfluxDB :8086</span>
+        <div class="step-actor"><span class="step-icon">📈</span> Time-Series DB</div>
+        <div class="step-title">Metrics Written Live</div>
+        <div class="step-sub">requestsRaw · virtualUsers · testStartEnd · k6_http_*</div>
+      </div>
+      <div class="arrow arr-amber"><div class="arrow-body"></div><div class="arrow-head"></div><div class="arrow-lbl">job_update<br>WS stream</div></div>
+      <div class="step s-be" data-id="s19">
+        <span class="step-tag">Control Plane</span>
+        <div class="step-actor"><span class="step-icon">🔁</span> WS Fan-out</div>
+        <div class="step-title">Relay to Browser</div>
+        <div class="step-sub">Agent → control plane → frontend WebSocket</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-connector"><div class="pc-dot" style="background:#047857"></div><div class="pc-label">K6 runs · metrics flow to InfluxDB · stdout streams to browser in real time</div><div class="pc-line"></div></div>
+
+  <!-- PHASE 5 -->
+  <div class="phase-group ph5">
+    <div class="phase-label">
+      <div class="phase-num">5</div>
+      <div class="phase-title">Observe in Real Time</div>
+      <div class="phase-line"></div>
+    </div>
+    <div class="steps-row">
+      <div class="step s-fe" data-id="s20">
+        <span class="step-tag">Executor Page</span>
+        <div class="step-actor"><span class="step-icon">🖥️</span> Frontend</div>
+        <div class="step-title">Live Log Stream</div>
+        <div class="step-sub">/ws/executor/:id · stdout lines · progress % · DB polling fallback</div>
+      </div>
+      <div class="arrow arr-teal"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-teal" data-id="s21">
+        <span class="step-tag">Grafana :9999</span>
+        <div class="step-actor"><span class="step-icon">📊</span> Dashboards</div>
+        <div class="step-title">Real-Time Panels</div>
+        <div class="step-sub">p50/p95/p99 · VU ramp · RPS · error rate · $runId filter</div>
+      </div>
+      <div class="arrow arr-blue"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-fe" data-id="s22">
+        <span class="step-tag">Dashboard</span>
+        <div class="step-actor"><span class="step-icon">🏠</span> Frontend</div>
+        <div class="step-title">Health &amp; Status</div>
+        <div class="step-sub">Health score · integration connectivity · execution status</div>
+      </div>
+      <div class="arrow arr-amber"><div class="arrow-body"></div><div class="arrow-head"></div><div class="arrow-lbl">test ends<br>job_complete</div></div>
+      <div class="step s-be" data-id="s23">
+        <span class="step-tag">Control Plane</span>
+        <div class="step-actor"><span class="step-icon">⚙️</span> Job Complete</div>
+        <div class="step-title">Evaluate SLOs</div>
+        <div class="step-sub">Exit code · threshold pass/fail · aggregate metrics</div>
+      </div>
+      <div class="arrow arr-teal"><div class="arrow-body"></div><div class="arrow-head"></div><div class="arrow-lbl">push<br>aggregates</div></div>
+      <div class="step s-teal" data-id="s24">
+        <span class="step-tag">InfluxDB</span>
+        <div class="step-actor"><span class="step-icon">📈</span> Aggregates</div>
+        <div class="step-title">Post-Run Push</div>
+        <div class="step-sub">k6_execution · k6_thresholds · p50–p99 · RPS · error rate</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase-connector"><div class="pc-dot" style="background:#0e7490"></div><div class="pc-label">SLOs evaluated → execution record updated → notifications fired</div><div class="pc-line"></div></div>
+
+  <!-- PHASE 6 -->
+  <div class="phase-group ph6">
+    <div class="phase-label">
+      <div class="phase-num">6</div>
+      <div class="phase-title">Report &amp; Iterate</div>
+      <div class="phase-line"></div>
+    </div>
+    <div class="steps-row">
+      <div class="diamond-wrap" data-id="d2">
+        <div class="diamond"><div class="diamond-txt">SLO<br>Pass?</div></div>
+        <div class="diamond-yes">✅ PASS</div>
+        <div class="diamond-no">❌ FAIL</div>
+      </div>
+      <div class="arrow arr-pink"><div class="arrow-body"></div><div class="arrow-head"></div><div class="arrow-lbl">breach<br>alert</div></div>
+      <div class="step s-be" data-id="s25">
+        <span class="step-tag">Notification Svc</span>
+        <div class="step-actor"><span class="step-icon">🔔</span> Alert Service</div>
+        <div class="step-title">Fire Notifications</div>
+        <div class="step-sub">Threshold breach · SLO violation · agent events</div>
+      </div>
+      <div class="arrow arr-green"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-data" data-id="s26">
+        <span class="step-tag">PostgreSQL</span>
+        <div class="step-actor"><span class="step-icon">🗄️</span> Data Store</div>
+        <div class="step-title">Save Execution Record</div>
+        <div class="step-sub">Status · metrics JSON · thresholdResults · checkResults</div>
+      </div>
+      <div class="arrow arr-blue"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-fe" data-id="s27">
+        <span class="step-tag">Reports Page</span>
+        <div class="step-actor"><span class="step-icon">📋</span> Frontend</div>
+        <div class="step-title">Review Report</div>
+        <div class="step-sub">p50/p95/p99 · RPS · error rate · per-threshold pass/fail</div>
+      </div>
+      <div class="arrow arr-gray"><div class="arrow-body"></div><div class="arrow-head"></div></div>
+      <div class="step s-user" data-id="s28">
+        <span class="step-tag">Decision</span>
+        <div class="step-actor"><span class="step-icon">✅</span> QA Manager</div>
+        <div class="step-title">Go / No-Go</div>
+        <div class="step-sub">Release gate decision based on SLO compliance &amp; trends</div>
+      </div>
+      <div class="arrow arr-gray"><div class="arrow-body"></div><div class="arrow-head"></div><div class="arrow-lbl">iterate &amp;<br>re-run</div></div>
+      <div class="step s-user" data-id="s29">
+        <span class="step-tag">End / Loop</span>
+        <div class="step-actor"><span class="step-icon">🔄</span> Team</div>
+        <div class="step-title">Tune &amp; Repeat</div>
+        <div class="step-sub">Adjust load, thresholds, fix bottlenecks → back to step 1</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /flow -->
+
+<!-- DETAIL PANEL -->
+<div class="detail" id="detail">
+  <div class="detail-hdr">
+    <h3 id="detail-title">Step Details</h3>
+    <button class="detail-close" id="detail-close">✕ Close</button>
+  </div>
+  <div class="detail-body" id="detail-body"></div>
+</div>
+
+</div><!-- /page -->
+
+<div class="tip" id="tip">Click to expand</div>
+
+<script>
+const steps = {
+  s1:{title:'Define Test Goal',cols:[{h:'Who',b:'QA Engineer or Performance Engineer — the primary author of performance tests.'},{h:'What they decide',b:'<strong>Target:</strong> which API endpoint or user journey to load test.<br><strong>Load shape:</strong> number of virtual users (VUs), ramp-up duration, steady state, ramp-down.<br><strong>SLO targets:</strong> e.g. p95 latency &lt; 500ms, error rate &lt; 1%.'},{h:'Next step',b:'Chooses how to create the test script: visual form builder, CSV upload, AI natural language prompt, or raw K6 JavaScript.'}]},
+  s2:{title:'Author Test Spec — Visual Builder',cols:[{h:'UI fields',b:'Endpoint URL · HTTP method · request headers · body (JSON/form) · query params · load stages (duration + target VUs pairs)'},{h:'SLO & Checks',b:'Threshold conditions in K6 syntax, e.g. <code>http_req_duration p(95) &lt; 500</code>. Check assertions per endpoint. Environment binding. Tags for filtering reports.'},{h:'Preview',b:'Route <code>/preview/:specId</code> shows the generated K6 script JSON and raw JS before executing. Allows review and manual editing before any load hits the target system.'}]},
+  s3:{title:'AI Script Generation — Claude Opus',cols:[{h:'How it works',b:'User types a plain-English description. Backend calls the Anthropic API (Claude Opus). Response streamed back via Server-Sent Events (SSE) — script appears character-by-character in the code editor.'},{h:'What AI produces',b:'A complete, runnable K6 script with: all INFLUX_V2_* env var declarations, <code>writeInfluxLines()</code> helper, <code>setup()</code>/<code>teardown()</code> for annotations, <code>recordCustomMetrics()</code> after every HTTP request.'},{h:'System prompt',b:'Forces AI to include the full InfluxDB observability boilerplate on every generation. Every AI-generated script produces Grafana-visible metrics without manual editing.'}]},
+  s4:{title:'Persist TestSpec — Control Plane',cols:[{h:'API endpoint',b:'<code>POST /api/test-specs</code> (create) · <code>PUT /api/test-specs/:id</code> (update). Requires JWT + TESTER or ADMIN role.'},{h:'Data stored',b:'<strong>request</strong> (Json): method, url, headers, body · <strong>loadProfile</strong> (Json): stages array · <strong>thresholds</strong> (Json): K6 threshold conditions · <strong>checks</strong>: assertion list · <strong>environmentId</strong>'},{h:'ORM',b:'Prisma 7 with <code>pg.Pool</code> + <code>PrismaPg</code> adapter. dotenv loaded inside prisma.ts itself to prevent hoisting issue where DATABASE_URL is undefined at pool creation time.'}]},
+  s5:{title:'TestSpec Saved — PostgreSQL',cols:[{h:'Schema',b:'<strong>id</strong> (cuid) · <strong>name</strong> · <strong>request</strong> (Json) · <strong>loadProfile</strong> (Json) · <strong>thresholds</strong> (Json) · <strong>checks[]</strong> · <strong>environmentId</strong> · <strong>lastRunStatus</strong> · <strong>executions[]</strong>'},{h:'Database',b:'PostgreSQL. Migrations via <code>npx prisma migrate dev</code>. Seed via <code>npm run db:seed</code>.'},{h:'Multi-env support',b:'Same TestSpec executed against any environment by specifying a different environmentId at run time. Base URL and secrets resolved from environment record at dispatch time.'}]},
+  s6:{title:'Set Target Environment',cols:[{h:'Who',b:'DevOps engineer or Admin. One-time setup per environment (dev / staging / prod).'},{h:'What',b:'<strong>Base URL:</strong> root endpoint for this environment.<br><strong>Variables:</strong> key-value env vars injected into K6 scripts.<br><strong>requiresApproval:</strong> flag preventing accidental load tests on production.'},{h:'Secret references',b:'Secrets page registers vault path references. Actual secret values are never stored in the PTaaS database — only the reference path. Resolved and injected at dispatch time.'}]},
+  s7:{title:'Register Secrets — Frontend',cols:[{h:'Secrets UI',b:'Route <code>/secrets</code>. Create secret records: name, backend (vault type), backendPath, linked environments, expiry date.'},{h:'Environments UI',b:'Route <code>/environments</code>. Create environments: name, baseUrl, variable key-value pairs, requiresApproval toggle.'},{h:'Admin UI',b:'Route <code>/admin</code>. Configure global integrations: InfluxDB URL/token, Grafana URL. Live connectivity test via <code>POST /api/config/test-connections</code>. User management.'}]},
+  s8:{title:'Store Config — Control Plane',cols:[{h:'Endpoints',b:'<code>POST /api/environments</code> · <code>POST /api/secrets</code> · <code>POST /api/agents/register</code> (public, returns agentId + apiKey).'},{h:'Agent record',b:'On <code>POST /api/agents/register</code>: creates Agent record with generated 64-char hex apiKey. DevOps copies agentId and apiKey into <code>agent/.env</code> to bootstrap the agent process.'},{h:'Security',b:'Secret values are never stored. Agent apiKey stored in PostgreSQL. Environment approval gate checked at dispatch time before job is sent to agent.'}]},
+  s9:{title:'Agent Connects — WebSocket',cols:[{h:'Connection',b:'Agent reads <code>agent/.env</code>: CONTROL_PLANE_URL, AGENT_ID, AGENT_API_KEY. Opens WebSocket to <code>wss://control-plane/ws/agent/:agentId?apiKey=&lt;key&gt;</code>.'},{h:'Registration',b:'Sends <code>{ type: "register", agentId, name, hostname, k6Version }</code>. Control plane validates apiKey against Agent record in PostgreSQL, adds to in-memory agentRegistry Map.'},{h:'Heartbeat',b:'Agent sends <code>{ type: "heartbeat" }</code> every 15 seconds. Auto-reconnect with 5-second exponential backoff on disconnect.'}]},
+  s10:{title:'Config Persisted — PostgreSQL',cols:[{h:'Agent status',b:'Agent record updated to status = "online". agentRegistry Map holds live WebSocket reference for job dispatch.'},{h:'Readiness check',b:'Frontend Dashboard shows integration connectivity: InfluxDB and Grafana health checked via <code>GET /api/config/test-connections</code>.'},{h:'Multi-agent',b:'Multiple agents can be registered simultaneously. Horizontal scale: deploy more agents, no config change required.'}]},
+  s11:{title:'Initiate Run — User / CI/CD',cols:[{h:'Manual',b:'Executor page: select a TestSpec or paste raw K6 JS, set VU count, duration, env vars, click Run. RunConfirmModal prevents accidental triggers.'},{h:'Scheduled',b:'Schedules page: configure a cron expression linked to a TestSpec. Scheduler service runs server-side and dispatches automatically.'},{h:'CI/CD pipeline',b:'<code>POST /api/executions</code> with <code>Authorization: Bearer &lt;JWT&gt;</code>. CI pipeline reads the response status (pass/fail) to gate the deployment.'}]},
+  s12:{title:'Build K6 Script — Generator',cols:[{h:'k6Generator.ts',b:'Takes a TestSpec struct → produces a complete K6 JS file. Injects: VU options, load stages, threshold definitions, check functions, <code>gracefulRampDown/Stop: "5s"</code>.'},{h:'InfluxDB boilerplate',b:'All generators inject the same template from <code>k6InfluxTemplate.ts</code>: INFLUX_V2_* env vars, <code>writeInfluxLines()</code>, <code>setup()</code>/<code>teardown()</code>, <code>recordCustomMetrics()</code>.'},{h:'Validation',b:'Auto-injects <code>export default function</code> if missing. Detects scenarios block to avoid passing <code>--vus/--duration</code> CLI flags that would override it.'}]},
+  s13:{title:'Pick Agent & Dispatch',cols:[{h:'Agent selection',b:'agentRegistry (in-memory Map) queried for first agent with status "online". Agent marked "busy". If no agent available → 503 returned.'},{h:'Env var injection',b:'Maps <code>INFLUXDB_*</code> → <code>INFLUX_V2_*</code> naming required by K6 scripts. Injects RUN_ID for consistent Grafana $runId variable.'},{h:'Dispatch message',b:'<code>{ type: "dispatch_job", executionId, script: "&lt;K6 JS&gt;", config: { vus, duration, stages[], envVars, profileType } }</code>'}]},
+  s14:{title:'Execution Record Created',cols:[{h:'Schema',b:'<strong>id</strong> (cuid) · <strong>specId</strong> · <strong>status</strong> = "running" · <strong>triggeredBy</strong> · <strong>agentId</strong> · <strong>startedAt</strong>'},{h:'DB polling fallback',b:'Frontend polls <code>GET /api/executions/:id</code> every 4 seconds. If WS drops mid-run, polling detects final status within 4 seconds.'},{h:'Tracking',b:'executionId used as the WebSocket channel key: browser opens <code>/ws/executor/:executionId</code>, control plane routes job_update messages to matching browser socket.'}]},
+  s15:{title:'Agent: Accept Job',cols:[{h:'Receive',b:'<code>dispatch_job</code> arrives on agent WebSocket. <code>jobHandler.ts</code> parses script and config. Sends <code>{ type: "job_accepted", executionId }</code> back.'},{h:'Validate script',b:'Checks for <code>export default function</code> — auto-injects empty one if missing (K6 exits 104 without it).'},{h:'Load profile injection',b:'Replaces <code>stages: [...]</code> using bracket-counting parser (not regex) to safely handle multi-stage arrays.'}]},
+  s16:{title:'Spawn K6 Binary',cols:[{h:'Process',b:'<code>child_process.spawn(k6Path, ["run", scriptPath], { env: { ...process.env, ...config.envVars } })</code>.'},{h:'CLI flags',b:'Only passes <code>--vus</code> and <code>--duration</code> when the script has NO scenarios block — passing these flags to a scenarios script completely overrides it.'},{h:'Graceful stop',b:'Scripts include <code>gracefulRampDown: "5s"</code> and <code>gracefulStop: "5s"</code> to prevent VUs hanging. Agent marks itself available after process exit.'}]},
+  s17:{title:'Run Scenarios — Virtual Users',cols:[{h:'Execution',b:'K6 VUs run the test script in a JS runtime. Each VU executes HTTP requests against the target following the load profile stages.'},{h:'Checks & Thresholds',b:'<strong>Checks:</strong> boolean assertions per response. <strong>Thresholds:</strong> K6 evaluates these at test end and sets exit code 0 (pass) or 1 (fail).'},{h:'Metrics collected',b:'Built-in K6 metrics plus custom: requestsRaw, virtualUsers, testStartEnd, k6_http_req_* — all written to InfluxDB via <code>writeInfluxLines()</code>.'}]},
+  s18:{title:'Write Metrics to InfluxDB (In-band)',cols:[{h:'How',b:'Each VU calls <code>writeInfluxLines()</code> — a custom function making HTTP POST to InfluxDB v2 API directly from within the VU execution context.'},{h:'Measurements',b:'<code>requestsRaw</code>: per request (responseTime ms, status, error). <code>virtualUsers</code>: per iteration. <code>testStartEnd</code>: setup/teardown. <code>k6_http_req_*</code>: counters.'},{h:'Gate condition',b:'All writes gated on <code>INFLUX_V2_ENABLED = !!(INFLUX_V2_ORG && INFLUX_V2_BUCKET && INFLUX_V2_TOKEN)</code>. Any missing var → silent no-op.'}]},
+  s19:{title:'Relay Updates to Browser',cols:[{h:'WS architecture',b:'Two WebSocketServer instances share one HTTP server. Single "upgrade" listener routes <code>/ws/executor/*</code> → executorWss, <code>/ws/agent/*</code> → agentWss.'},{h:'Fan-out',b:'job_update arrives from agent → control plane looks up executionId → forwards to connected browser WebSocket.'},{h:'Vite proxy',b:'Executor page connects directly to <code>ws://localhost:3001</code> in dev mode, bypassing Vite WS proxy to avoid flakiness.'}]},
+  s20:{title:'Live Log Stream — Frontend',cols:[{h:'Connection',b:'Executor page opens <code>ws://localhost:3001/ws/executor/:executionId</code>. Each job_update appends a log line to the terminal UI.'},{h:'Resilience',b:'DB polling every 4 seconds while status === "running". If WS drops, polling detects final status from PostgreSQL within 4 seconds.'},{h:'UX',b:'QA engineer watches VU ramp, response time trends, error messages, and scenario status events in real time.'}]},
+  s21:{title:'Grafana Real-Time Panels',cols:[{h:'Data source',b:'InfluxDB v2 bucket "k6". Panels refresh every 5–10 seconds during test execution.'},{h:'Panels',b:'Response time percentiles (p50/p95/p99) · VU ramp curve · RPS gauge · error rate % · per-endpoint latency · test start/end annotations.'},{h:'$runId variable',b:'Filters all panels to a single test run. Requires RUN_ID env var at dispatch time.'}]},
+  s22:{title:'Dashboard Health View',cols:[{h:'Health score',b:'Composite from recent pass/fail ratio, SLO compliance rate, and integration connectivity.'},{h:'Integration status',b:'<code>GET /api/config/test-connections</code> — live health check of InfluxDB and Grafana. Green/red chip per integration.'},{h:'Grafana embed',b:'Dashboard embeds Grafana via <code>/api/grafana-proxy</code>. Backend strips <code>X-Frame-Options</code> and CSP headers, enabling same-origin iframe.'}]},
+  s23:{title:'Evaluate SLOs — Control Plane',cols:[{h:'Trigger',b:'<code>job_complete</code> received from agent with exitCode and parsed summary metrics.'},{h:'SLO evaluation',b:'Compares actual metric values (p95, error_rate, RPS) against threshold conditions. Determines per-threshold pass/fail and overall execution status.'},{h:'Status update',b:'Updates Execution record: status, completedAt, metrics JSON (p50/p90/p95/p99/avg/rps/errorRate/maxVus/totalRequests/duration/thresholdBreaches).'}]},
+  s24:{title:'Post-Run Aggregates → InfluxDB',cols:[{h:'k6_execution',b:'One InfluxDB point per run: p50/p90/p95/p99/avg/max/rps/errorRate/maxVus/totalRequests/duration/thresholdBreaches.'},{h:'k6_thresholds',b:'One point per threshold condition: name, pass/fail bool, actual value. Enables historical SLO compliance trend queries.'},{h:'Client',b:'Uses <code>@influxdata/influxdb-client</code> Node.js library. Reads <code>INFLUXDB_*</code> env vars (not INFLUX_V2_* — that is K6-side naming only).'}]},
+  s25:{title:'Fire Notifications',cols:[{h:'Triggers',b:'Threshold breach · SLO violation · execution error (K6 crashed) · agent disconnection during run.'},{h:'Payload',b:'Notification record in PostgreSQL: specName, environment, breached condition, actual vs expected values, executionId, timestamp.'},{h:'Frontend',b:'Notifications page lists all alerts with read/unread state. Bell icon in sidebar shows unread count.'}]},
+  s26:{title:'Save Execution Record',cols:[{h:'Final status',b:'<strong>pass</strong>: exit 0, all thresholds met. <strong>fail</strong>: exit 1, threshold exceeded. <strong>error</strong>: K6 crashed or script syntax error.'},{h:'Metrics stored',b:'Full aggregated metrics JSON in Execution record. Reports page reads from PostgreSQL — fast load even if InfluxDB unavailable.'},{h:'Audit trail',b:'Every execution records: triggeredBy, agentId, specId, environment, startedAt, completedAt — full history preserved.'}]},
+  s27:{title:'Review Report — Frontend',cols:[{h:'Reports list',b:'Route <code>/reports</code> — paginated list with status badge. Filter by spec, environment, status, date range.'},{h:'Execution detail',b:'p50/p90/p95/p99/avg · max VUs · RPS · error rate · total requests · test duration · agent used.'},{h:'Threshold results',b:'Per-condition table: condition text · actual value · pass/fail badge. Check results: per-check name, pass rate %.'}]},
+  s28:{title:'Go / No-Go Decision',cols:[{h:'Who',b:'QA Manager or Release Manager makes the final release gate decision.'},{h:'Inputs',b:'Overall pass/fail status · threshold breach count · trend vs previous runs · Grafana latency panels · error breakdown.'},{h:'Outcome',b:'<strong>Go:</strong> all SLOs met, deploy proceeds. <strong>No-Go:</strong> SLO violated, deployment blocked. CI/CD reads API response status to automate this gate.'}]},
+  s29:{title:'Tune & Repeat',cols:[{h:'Iterate on test',b:'Adjust load profile, tighten SLO thresholds, add endpoint checks. All editable via Test Builder UI without touching K6 code.'},{h:'Iterate on system',b:'Engineering fixes the bottleneck. Rerun the same test spec against the same environment to verify the fix.'},{h:'Feedback loop',b:'Each run adds to execution history. Trend analysis shows whether performance is improving, degrading, or stable across releases.'}]},
+  d1:{title:'Script Source Decision',cols:[{h:'Option A: Visual Form',b:'QA engineer fills in the Test Builder UI. No coding required. Best for standard REST API load tests.'},{h:'Option B: AI Prompt',b:'Type a natural language description. Claude Opus generates a complete K6 script via SSE streaming. Best for complex scenarios or rapid prototyping.'},{h:'Option C: CSV / Raw K6',b:'Upload a CSV of test cases (converted to weighted scenarios) or paste raw K6 JavaScript directly. Best for migrating existing K6 scripts.'}]},
+  d2:{title:'SLO Pass/Fail Gate',cols:[{h:'PASS (exit code 0)',b:'All K6 threshold conditions met. Status = "pass". No breach notifications. CI/CD receives 200 OK. Deployment proceeds.'},{h:'FAIL (exit code 1)',b:'One or more thresholds exceeded. Status = "fail". Threshold breach notifications created. CI/CD receives failure — deployment blocked.'},{h:'ERROR',b:'K6 process crashed (syntax error, network unreachable). Status = "error". Error notification created. Agent marks itself available for next job.'}]},
+};
+
+const tip=document.getElementById('tip'),detail=document.getElementById('detail'),dTitle=document.getElementById('detail-title'),dBody=document.getElementById('detail-body');
+document.querySelectorAll('[data-id]').forEach(el=>{
+  el.addEventListener('mouseenter',()=>tip.classList.add('show'));
+  el.addEventListener('mousemove',e=>{tip.style.left=(e.clientX+14)+'px';tip.style.top=(e.clientY-10)+'px';});
+  el.addEventListener('mouseleave',()=>tip.classList.remove('show'));
+  el.addEventListener('click',()=>{
+    const d=steps[el.dataset.id];if(!d)return;
+    document.querySelectorAll('[data-id]').forEach(n=>n.classList.remove('active'));
+    el.classList.add('active');
+    dTitle.textContent=d.title;
+    dBody.innerHTML=d.cols.map(c=>`<div class="detail-col"><h4>${c.h}</h4><p>${c.b}</p></div>`).join('');
+    detail.classList.add('open');
+    detail.scrollIntoView({behavior:'smooth',block:'nearest'});
+  });
+});
+document.getElementById('detail-close').addEventListener('click',()=>{
+  detail.classList.remove('open');
+  document.querySelectorAll('[data-id]').forEach(n=>n.classList.remove('active'));
+});
+</script>
+</body>
+</html>

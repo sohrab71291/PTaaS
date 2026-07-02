@@ -1,0 +1,18 @@
+{
+  "name": "ptaas",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["frontend", "backend", "agent"],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "agent:start": "cd agent && npm start",
+    "install:all": "npm install",
+    "setup": "powershell -ExecutionPolicy Bypass -File setup.ps1",
+    "setup:diagnose": "powershell -ExecutionPolicy Bypass -File setup.ps1 -Diagnose"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
