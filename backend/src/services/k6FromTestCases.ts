@@ -17,6 +17,13 @@ export interface ParsedTestCase {
   responseThresholdMs: number;
   weight: number;
   tags: string[];
+  // Names (not values) of cookies seen on the original captured request — a hint
+  // for reconstructing the session cookie name after a fresh login. See harParser.ts.
+  cookieNames?: string[];
+  // 'form' means `payload` is a JSON-encoded object of real field name/value
+  // pairs that must be sent as application/x-www-form-urlencoded, NOT
+  // JSON.stringify'd — see harParser.ts. Undefined/'json' = send as JSON body.
+  payloadType?: 'json' | 'form';
 }
 
 function safeName(name: string): string {
@@ -39,7 +46,7 @@ function detectBaseUrl(testCases: ParsedTestCase[]): string {
   return 'http://localhost:3000';
 }
 
-function toUrlPath(rawUrl: string): string {
+export function toUrlPath(rawUrl: string): string {
   try {
     const parsed = new URL(rawUrl);
     return parsed.pathname + parsed.search;
@@ -52,12 +59,12 @@ function toUrlPath(rawUrl: string): string {
 
 // POST requests to these URL patterns are treated as auth/login calls.
 // They are moved to setup() so tokens are captured once and shared with all VUs.
-const AUTH_URL_PATTERNS = /\/login\b|\/signin\b|\/auth\b|\/security\/login|\/api-session|\/oauth\/token|\/token\b/i;
+export const AUTH_URL_PATTERNS = /\/login\b|\/signin\b|\/auth\b|\/security\/login|\/api-session|\/oauth\/token|\/token\b/i;
 
 // Header names that carry session or CSRF tokens — these expire between runs,
 // so they are stripped from the static header block and supplied dynamically
 // from the data object returned by setup().
-const AUTH_HEADER_NAMES = new Set([
+export const AUTH_HEADER_NAMES = new Set([
   'x-csrf-token',
   'authorization',
   'x-auth-token',
@@ -67,11 +74,11 @@ const AUTH_HEADER_NAMES = new Set([
   'rsa-archer-session-token',
 ]);
 
-function isAuthEntry(tc: ParsedTestCase): boolean {
+export function isAuthEntry(tc: ParsedTestCase): boolean {
   return tc.method.toUpperCase() === 'POST' && AUTH_URL_PATTERNS.test(tc.url);
 }
 
-function isAuthHeader(name: string): boolean {
+export function isAuthHeader(name: string): boolean {
   return AUTH_HEADER_NAMES.has(name.toLowerCase());
 }
 
@@ -276,7 +283,12 @@ export function generateK6FromTestCases(testCases: ParsedTestCase[], loadProfile
       tags: { scenario: '${n}', api: '${apiTag}', name: '${upperMethod} ${urlPath}' },
     });`;
     } else {
-      const payloadStr = tc.payload ? `JSON.stringify(${tc.payload})` : 'null';
+      // 'form' payloads are already a real {field: value} object literal (see
+      // harParser.ts) — pass it to http.post as-is so k6 auto-urlencodes it,
+      // instead of JSON.stringify-ing it into a broken JSON body.
+      const payloadStr = tc.payload
+        ? (tc.payloadType === 'form' ? tc.payload : `JSON.stringify(${tc.payload})`)
+        : 'null';
       httpCall = `    const payload = ${payloadStr};
     const res = http.${k6Method(upperMethod)}(${urlExpr}, payload, {
       headers: ${headersExpr},

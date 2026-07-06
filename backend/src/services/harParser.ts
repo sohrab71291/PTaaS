@@ -13,6 +13,9 @@ const SKIP_URL_PATTERNS = [
   /hotjar\.com/i,
   /amplitude\.com/i,
   /sentry\.io/i,
+  // Third-party chat/support widgets — incidentally captured whenever they're
+  // embedded on the page under test, not part of the app itself.
+  /intercom\.io/i,
   /localhost:8086\/api\/v2\/write/i,   // InfluxDB write — internal
   /\/api\/v2\/(write|query)/i,         // InfluxDB — internal
   /\/api\/grafana-proxy/i,             // Grafana proxy — internal
@@ -82,7 +85,28 @@ export interface HarParseResult {
   skipped: number;
 }
 
-export function parseHar(content: string, filename = 'file'): HarParseResult {
+export interface ParseHarOptions {
+  // When false, every non-skipped entry is kept — including repeat calls to the
+  // same endpoint with different ids/params. Used by the AI-driven HAR→k6 flow,
+  // which needs the complete captured call sequence rather than one representative
+  // call per endpoint. Defaults to true to preserve the existing deterministic
+  // /api/upload/har behaviour (one k6 scenario per unique endpoint).
+  dedupe?: boolean;
+}
+
+// Cookie header values are never reused as-is (they're stale/session-specific by
+// the time the script runs), but the cookie NAMES are a useful hint for
+// reconstructing the session cookie after a fresh login — e.g. knowing the app
+// expects "__ArcherSessionCookie__" rather than a generic "session" cookie.
+function extractCookieNames(cookieHeaderValue: string): string[] {
+  return cookieHeaderValue
+    .split(';')
+    .map(part => part.split('=')[0]?.trim())
+    .filter((name): name is string => !!name);
+}
+
+export function parseHar(content: string, filename = 'file', opts: ParseHarOptions = {}): HarParseResult {
+  const dedupe = opts.dedupe ?? true;
   const warnings: string[] = [];
   let doc: HarDoc;
 
@@ -107,19 +131,31 @@ export function parseHar(content: string, filename = 'file'): HarParseResult {
 
     if (shouldSkipUrl(req.url)) { skipped++; continue; }
 
-    const key = dedupeKey(req.method, req.url);
-    if (seen.has(key)) { skipped++; continue; }
-    seen.set(key, true);
+    if (dedupe) {
+      const key = dedupeKey(req.method, req.url);
+      if (seen.has(key)) { skipped++; continue; }
+      seen.set(key, true);
+    }
 
     // ── Headers ─────────────────────────────────────────────────────────────
     const headers: Record<string, string> = {};
+    let cookieNames: string[] = [];
     for (const h of req.headers ?? []) {
-      if (!h.name || SKIP_HEADERS.has(h.name.toLowerCase())) continue;
+      if (!h.name) continue;
+      if (h.name.toLowerCase() === 'cookie') {
+        // Names only — values are stale/session-specific by the time the
+        // generated script runs, but the names hint at what the app's session
+        // cookie is called (see extractCookieNames above).
+        cookieNames = extractCookieNames(h.value);
+        continue;
+      }
+      if (SKIP_HEADERS.has(h.name.toLowerCase())) continue;
       headers[h.name] = h.value;
     }
 
     // ── Payload ──────────────────────────────────────────────────────────────
     let payload: string | null = null;
+    let payloadType: 'json' | 'form' | undefined;
     if (req.postData?.text) {
       const mime = (req.postData.mimeType ?? '').toLowerCase();
       if (mime.includes('json')) {
@@ -131,9 +167,21 @@ export function parseHar(content: string, filename = 'file'): HarParseResult {
           warnings.push(`${filename}: non-parseable JSON body for ${req.method} ${req.url} — using raw text`);
         }
       } else if (mime.includes('form')) {
-        // application/x-www-form-urlencoded — keep as string note
-        payload = JSON.stringify({ _formData: req.postData.text });
-        warnings.push(`${filename}: form-encoded body for ${req.method} ${req.url} converted to JSON object`);
+        // application/x-www-form-urlencoded — parse into real field name/value
+        // pairs (not a raw string) so the generated script can replay it as an
+        // actual form submission (payloadType tells the generators to send it
+        // urlencoded, not JSON.stringify'd).
+        try {
+          const fields: Record<string, string> = {};
+          for (const [k, v] of new URLSearchParams(req.postData.text)) fields[k] = v;
+          payload = JSON.stringify(fields, null, 2);
+          payloadType = 'form';
+          warnings.push(`${filename}: form-encoded body for ${req.method} ${req.url} parsed into ${Object.keys(fields).length} field(s)`);
+        } catch {
+          payload = req.postData.text;
+          payloadType = 'form';
+          warnings.push(`${filename}: could not parse form-encoded body for ${req.method} ${req.url} — using raw text`);
+        }
       } else {
         payload = req.postData.text;
       }
@@ -157,6 +205,8 @@ export function parseHar(content: string, filename = 'file'): HarParseResult {
       responseThresholdMs: 500,
       weight: 1,
       tags: [],
+      ...(cookieNames.length ? { cookieNames } : {}),
+      ...(payloadType ? { payloadType } : {}),
     });
   }
 

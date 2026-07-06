@@ -11,8 +11,8 @@
     {
       "name": "backend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:backend"],
-      "cwd": "C:\\Temp\\PTaaS\\PTaaS\\PTaaS",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "backend",
       "port": 3001
     }
   ]

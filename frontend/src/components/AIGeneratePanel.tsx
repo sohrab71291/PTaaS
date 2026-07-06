@@ -491,7 +491,7 @@ export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
   );
 };
 
-const StreamingCodeDisplay: React.FC<{ code: string; isStreaming: boolean }> = ({ code, isStreaming }) => {
+export const StreamingCodeDisplay: React.FC<{ code: string; isStreaming: boolean }> = ({ code, isStreaming }) => {
   const ref = useRef<HTMLPreElement>(null);
 
   React.useEffect(() => {
@@ -522,7 +522,7 @@ const StreamingCodeDisplay: React.FC<{ code: string; isStreaming: boolean }> = (
   );
 };
 
-function colorizeK6Line(line: string): string {
+export function colorizeK6Line(line: string): string {
   const t = line.trimStart();
   if (t.startsWith('//') || t.startsWith('*'))                                              return '#6c7086';
   if (t.startsWith('import ') || t.startsWith('export '))                                   return '#cba6f7';
