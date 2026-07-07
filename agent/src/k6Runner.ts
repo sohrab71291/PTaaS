@@ -458,6 +458,16 @@ export class K6Runner {
       ];
     }
 
+    // ── Preserve the script's own thresholds ──────────────────────────────────
+    // The Executor's load profile always wins for scenarios/VUs/duration, but the
+    // script author (or Claude, per the HAR/AI generation prompts) tuned these
+    // thresholds against the target's actual behavior — e.g. a lenient
+    // http_req_failed rate to tolerate expected auth-probe responses. Dropping
+    // them silently changed pass/fail semantics between a local `k6 run` and an
+    // Executor-dispatched run of the exact same script.
+    const originalThresholds = this.extractThresholdsBlock(config.script);
+    const thresholdsLine = originalThresholds ? `  ${originalThresholds},\n` : '';
+
     // ── Build the replacement options block ───────────────────────────────────
     let optionsBlock: string;
 
@@ -480,6 +490,7 @@ export class K6Runner {
         optionsBlock =
           `export const options = {\n` +
           `  scenarios: {\n${scenarios},\n  },\n` +
+          thresholdsLine +
           `};\n`;
       } else {
         // Simple script — use the built-in vus/duration shorthand (runs default())
@@ -487,6 +498,7 @@ export class K6Runner {
           `export const options = {\n` +
           `  vus: ${vus},\n` +
           `  duration: '${duration}',\n` +
+          thresholdsLine +
           `};\n`;
       }
     } else {
@@ -508,12 +520,14 @@ export class K6Runner {
         optionsBlock =
           `export const options = {\n` +
           `  scenarios: {\n${scenarios},\n  },\n` +
+          thresholdsLine +
           `};\n`;
       } else {
         // Simple script — use the built-in stages shorthand (runs default())
         optionsBlock =
           `export const options = {\n` +
           `  stages: [\n${stagesStr},\n  ],\n` +
+          thresholdsLine +
           `};\n`;
       }
     }
@@ -531,6 +545,47 @@ export class K6Runner {
       optionsBlock +
       (after ? '\n' + after : '')
     );
+  }
+
+  /**
+   * Extracts the verbatim `thresholds: { ... }` property (no trailing comma)
+   * from the script's existing `export const options = { ... }` block, so it
+   * can be spliced back into the Executor-rebuilt options block. Returns null
+   * if the script has no options block or no thresholds property.
+   */
+  private extractThresholdsBlock(script: string): string | null {
+    const optionsMatch = script.match(/export\s+const\s+options\s*=/);
+    if (!optionsMatch || optionsMatch.index === undefined) return null;
+
+    const optionsBraceStart = script.indexOf('{', optionsMatch.index);
+    if (optionsBraceStart === -1) return null;
+
+    let depth = 0;
+    let optionsBraceEnd = -1;
+    for (let i = optionsBraceStart; i < script.length; i++) {
+      if (script[i] === '{') depth++;
+      else if (script[i] === '}') {
+        if (--depth === 0) { optionsBraceEnd = i; break; }
+      }
+    }
+    if (optionsBraceEnd === -1) return null;
+
+    const optionsBody = script.slice(optionsBraceStart + 1, optionsBraceEnd);
+    const thresholdsMatch = optionsBody.match(/thresholds\s*:\s*\{/);
+    if (!thresholdsMatch || thresholdsMatch.index === undefined) return null;
+
+    const thBraceStart = optionsBody.indexOf('{', thresholdsMatch.index);
+    let thDepth = 0;
+    let thBraceEnd = -1;
+    for (let i = thBraceStart; i < optionsBody.length; i++) {
+      if (optionsBody[i] === '{') thDepth++;
+      else if (optionsBody[i] === '}') {
+        if (--thDepth === 0) { thBraceEnd = i; break; }
+      }
+    }
+    if (thBraceEnd === -1) return null;
+
+    return optionsBody.slice(thresholdsMatch.index, thBraceEnd + 1);
   }
 
   /**

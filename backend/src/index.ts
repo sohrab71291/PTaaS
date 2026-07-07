@@ -21,6 +21,7 @@ import reportsRouter from './routes/reports';
 import uploadRouter from './routes/upload';
 import executorRouter from './routes/executor';
 import aiGenerateRouter from './routes/aiGenerate';
+import harGenerateRouter from './routes/harGenerate';
 
 import { agentRegistry } from './services/agentRegistry';
 import { pushExecutionMetrics } from './services/influxdb';
@@ -67,6 +68,7 @@ app.use('/api/reports', reportsRouter);
 app.use('/api', uploadRouter);
 app.use('/api', executorRouter);
 app.use('/api', aiGenerateRouter);
+app.use('/api', harGenerateRouter);
 app.use('/api/schedules', schedulesRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api', coralogixRouter);

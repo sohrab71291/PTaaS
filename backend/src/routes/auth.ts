@@ -1,10 +1,18 @@
 import { Router, Request, Response } from 'express';
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma';
 import { requireAuth, AuthRequest } from '../middleware/auth';
+import { sendMail } from '../lib/mailer';
 
 const router = Router();
+
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 function signToken(user: { id: string; email: string; role: string }): string {
   return jwt.sign(
@@ -57,6 +65,79 @@ router.post('/login', async (req: Request, res: Response) => {
 
   const token = signToken({ id: user.id, email: user.email, role: user.role });
   res.json({ token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+});
+
+router.post('/forgot-password', async (req: Request, res: Response) => {
+  const { email } = req.body;
+  if (!email) {
+    res.status(400).json({ error: 'email is required' });
+    return;
+  }
+
+  const genericResponse = { message: 'If an account with that email exists, a password reset link has been sent.' };
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  if (!user) {
+    res.json(genericResponse);
+    return;
+  }
+
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      resetTokenHash: hashToken(rawToken),
+      resetTokenExpiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
+    },
+  });
+
+  const appUrl = process.env.APP_URL || 'http://localhost:5173';
+  const resetLink = `${appUrl}/reset-password?token=${rawToken}`;
+
+  // Fire-and-forget: don't block the response on SMTP delivery. Awaiting here would
+  // both hang the request if the mail server is unreachable and leak a timing
+  // side-channel that reveals whether the email is registered.
+  sendMail(
+    [user.email],
+    'PerfOps: Reset your password',
+    `<div style="font-family:sans-serif;max-width:480px">
+      <p>We received a request to reset the password for your PerfOps account.</p>
+      <p><a href="${resetLink}" style="color:#6366f1">Click here to reset your password</a></p>
+      <p style="color:#64748b;font-size:12px">This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+    </div>`,
+  ).then(result => {
+    if (!result.ok) console.error('Failed to send password reset email:', result.message);
+  });
+
+  res.json(genericResponse);
+});
+
+router.post('/reset-password', async (req: Request, res: Response) => {
+  const { token, password } = req.body;
+  if (!token || !password) {
+    res.status(400).json({ error: 'token and password are required' });
+    return;
+  }
+
+  const user = await prisma.user.findFirst({
+    where: {
+      resetTokenHash: hashToken(token),
+      resetTokenExpiresAt: { gt: new Date() },
+    },
+  });
+
+  if (!user) {
+    res.status(400).json({ error: 'Invalid or expired reset token' });
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { passwordHash, resetTokenHash: null, resetTokenExpiresAt: null },
+  });
+
+  res.json({ message: 'Password has been reset successfully' });
 });
 
 router.get('/me', requireAuth, (req: AuthRequest, res: Response) => {

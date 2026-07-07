@@ -6,6 +6,7 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 import * as fs from 'fs';
+import bcrypt from 'bcryptjs';
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL! });
 const adapter = new PrismaPg(pool);
@@ -21,8 +22,28 @@ function readJson(filename: string): any[] {
   }
 }
 
+async function seedAdminUser() {
+  const email = process.env.SEED_ADMIN_EMAIL || 'admin@perfops.dev';
+  const password = process.env.SEED_ADMIN_PASSWORD || 'ChangeMe123!';
+  const name = process.env.SEED_ADMIN_NAME || 'Admin';
+
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    console.log(`  Admin user already exists (${email}), skipping`);
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+  await prisma.user.create({
+    data: { email, passwordHash, name, role: 'ADMIN' },
+  });
+  console.log(`  Seeded default admin user: ${email} / ${password}`);
+}
+
 async function main() {
   console.log('Seeding database from JSON files...');
+
+  await seedAdminUser();
 
   const environments = readJson('environments.json');
   for (const env of environments) {

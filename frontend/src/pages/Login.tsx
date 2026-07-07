@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, Link } from 'react-router-dom';
 import { Zap, LogIn } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -60,9 +60,14 @@ export function Login() {
             </div>
 
             <div>
-              <label className="block text-slate-300 text-sm font-medium mb-1.5">
-                Password
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-slate-300 text-sm font-medium">
+                  Password
+                </label>
+                <Link to="/forgot-password" className="text-xs text-brand-400 hover:text-brand-300">
+                  Forgot password?
+                </Link>
+              </div>
               <input
                 type="password"
                 required

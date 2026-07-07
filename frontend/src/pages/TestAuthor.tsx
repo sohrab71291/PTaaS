@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  ChevronDown, ChevronUp, Save, Play, Eye, Calendar,
+  ChevronDown, ChevronUp, Save, Eye, Calendar,
   GitBranch, Plus, Trash2,
-  Code2, Copy, RotateCcw, Send, Loader2,
+  Code2, Copy, RotateCcw, Send, Loader2, Sparkles, Globe,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { TestSpec, Header } from '../types';
@@ -15,6 +15,8 @@ import { ToastContainer } from '../components/ToastContainer';
 import { useFetch } from '../hooks/useFetch';
 import { PreviewDrawer } from '../components/PreviewDrawer';
 import { AIGeneratePanel } from '../components/AIGeneratePanel';
+import { AgentRefinePanel } from '../components/AgentRefinePanel';
+import { HarToScriptPanel } from '../components/HarToScriptPanel';
 import { SloEditor } from '../components/SloEditor';
 import {
   TestType, Complexity, TestTypeProfile, TEST_TYPE_PROFILES,
@@ -90,9 +92,9 @@ export const TestAuthor: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [showRunModal, setShowRunModal] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
-  const [showRunSaveModal, setShowRunSaveModal] = useState(false);
-  const [runSaveLoading, setRunSaveLoading] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
+  // Section F tab: AI-generate-from-config vs. convert-from-HAR/JSON
+  const [genTab, setGenTab] = useState<'ai' | 'har'>('ai');
   const [previewTab, setPreviewTab] = useState<'json' | 'k6'>('json');
   const [savedId, setSavedId] = useState<string | null>(id || null);
   const { toasts, addToast, removeToast } = useToast();
@@ -208,42 +210,6 @@ export const TestAuthor: React.FC = () => {
     navigate('/executor');
   };
 
-  // "Run Now" entry point — same unsaved-changes gate as Send to Executor.
-  const handleRunClick = () => {
-    if (dirty || !savedId) { setShowRunSaveModal(true); return; }
-    setShowRunModal(true);
-  };
-
-  const confirmRunSave = async (shouldSave: boolean) => {
-    setRunSaveLoading(true);
-    try {
-      if (shouldSave) {
-        const result = await handleSave({ silent: true });
-        if (!result) return; // save failed — keep modal open, error toast already shown
-        setShowRunSaveModal(false);
-        setShowRunModal(true);
-        return;
-      }
-      // Skipping save: if this suite was saved before, run the last-saved
-      // version via the normal tracked-execution flow. If it was never saved
-      // at all, there's no specId to trigger against — fall back to the
-      // ad-hoc K6 Executor (same path "Send to Executor" already uses for
-      // unsaved suites) so the user can still run it without persisting it.
-      if (savedId) {
-        setShowRunSaveModal(false);
-        setShowRunModal(true);
-      } else if (generatedScript) {
-        stashForExecutor();
-        setShowRunSaveModal(false);
-        navigate('/executor');
-      } else {
-        addToast('Generate a script first, or save the suite, before running.', 'error');
-      }
-    } finally {
-      setRunSaveLoading(false);
-    }
-  };
-
   const confirmSendToExecutor = async (shouldSave: boolean) => {
     setSendToExecutorLoading(true);
     try {
@@ -269,6 +235,22 @@ export const TestAuthor: React.FC = () => {
     envVars.filter(e => e.key.trim()).forEach(e => { envObj[e.key] = e.value; });
     if (Object.keys(envObj).length) sessionStorage.setItem('generatedK6ScriptEnvVars', JSON.stringify(envObj));
     else sessionStorage.removeItem('generatedK6ScriptEnvVars');
+  };
+
+  // Shared completion handler for both Section F generators (AI-from-config and
+  // HAR/JSON import) — either one populates the same Script Editor (section G).
+  const handleScriptGenerated = (script: string) => {
+    sessionStorage.setItem('generatedK6Script', script);
+    if (spec.name.trim()) sessionStorage.setItem('generatedK6ScriptName', spec.name.trim());
+    if (savedId) sessionStorage.setItem('generatedK6ScriptSpecId', savedId);
+    else sessionStorage.removeItem('generatedK6ScriptSpecId');
+    const specSlos = (spec as any).slos ?? [];
+    if (specSlos.length) sessionStorage.setItem('generatedK6ScriptSlos', JSON.stringify(specSlos));
+    else sessionStorage.removeItem('generatedK6ScriptSlos');
+    storeExecutionSettings();
+    setGeneratedScript(script);
+    setScriptSnapshot(script);
+    setScriptEdited(false);
   };
 
   // Load existing spec if editing
@@ -488,46 +470,6 @@ export const TestAuthor: React.FC = () => {
         </div>
       )}
 
-      {showRunSaveModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">Save before running?</h2>
-            <p className="text-sm text-gray-600 mb-5">
-              {savedId
-                ? 'This test suite has unsaved changes. Save them before running?'
-                : 'This test suite hasn’t been saved yet. Save it before running?'}
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => { setShowRunSaveModal(false); }}
-                disabled={runSaveLoading}
-                className="px-4 py-2 text-sm text-gray-400 hover:text-gray-600 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => confirmRunSave(false)}
-                disabled={runSaveLoading}
-                className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 disabled:opacity-50"
-              >
-                No, just run
-              </button>
-              <button
-                type="button"
-                onClick={() => confirmRunSave(true)}
-                disabled={runSaveLoading}
-                className="flex items-center gap-2 px-4 py-2 bg-brand-500 text-white text-sm rounded-lg hover:bg-brand-600 disabled:opacity-50"
-              >
-                {runSaveLoading && <Loader2 size={14} className="animate-spin" />}
-                Yes, save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -573,13 +515,6 @@ export const TestAuthor: React.FC = () => {
             }`}
           >
             <Save size={14} /> {saving ? 'Saving...' : 'Save'}
-          </button>
-          <button
-            type="button"
-            onClick={handleRunClick}
-            className="flex items-center gap-1.5 px-3 py-2 bg-brand-500 text-white rounded-lg text-sm font-medium hover:bg-brand-600 disabled:opacity-50"
-          >
-            <Play size={14} /> Run Now
           </button>
           <button
             type="button"
@@ -978,30 +913,64 @@ export const TestAuthor: React.FC = () => {
         </div>
       </div>
 
-      {/* F. AI-Powered Test Generation */}
-      <div className="mt-4">
-        <AIGeneratePanel
-          testType={testType ? TEST_TYPE_TO_AI_LABEL[testType] : ''}
-          complexity={COMPLEXITY_TO_AI_LABEL[complexity]}
-          loadProfile={{ profileType, stages, constantVus, constantDuration }}
-          envVarKeys={envVars.filter(e => e.key.trim()).map(e => e.key.trim())}
-          specContext={specContext}
-          disabled={!!blockedReason}
-          disabledReason={blockedReason ?? undefined}
-          onScriptGenerated={(script) => {
-            sessionStorage.setItem('generatedK6Script', script);
-            if (spec.name.trim()) sessionStorage.setItem('generatedK6ScriptName', spec.name.trim());
-            if (savedId) sessionStorage.setItem('generatedK6ScriptSpecId', savedId);
-            else sessionStorage.removeItem('generatedK6ScriptSpecId');
-            const specSlos = (spec as any).slos ?? [];
-            if (specSlos.length) sessionStorage.setItem('generatedK6ScriptSlos', JSON.stringify(specSlos));
-            else sessionStorage.removeItem('generatedK6ScriptSlos');
-            storeExecutionSettings();
-            setGeneratedScript(script);
-            setScriptSnapshot(script);
-            setScriptEdited(false);
-          }}
-        />
+      {/* F. Script Generation — AI-from-config vs. HAR/JSON import, in separate tabs */}
+      <div className="mt-4 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div className={`px-6 py-4 ${genTab === 'ai' ? 'bg-gradient-to-r from-purple-600 to-indigo-600' : 'bg-gradient-to-r from-teal-600 to-cyan-600'}`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-white font-bold text-base">F. Script Generation</h2>
+              <p className="text-white/80 text-xs">
+                {genTab === 'ai'
+                  ? 'Upload test cases → Claude analyzes → K6 script generated'
+                  : 'Captured session → Claude analyzes → K6 script generated'}
+              </p>
+            </div>
+            <div className="flex gap-1 bg-black/20 p-1 rounded-lg">
+              <button
+                type="button"
+                onClick={() => setGenTab('ai')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                  genTab === 'ai' ? 'bg-white text-purple-700 shadow-sm' : 'text-white/80 hover:text-white'
+                }`}
+              >
+                <Sparkles size={14} /> AI Generate
+              </button>
+              <button
+                type="button"
+                onClick={() => setGenTab('har')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                  genTab === 'har' ? 'bg-white text-teal-700 shadow-sm' : 'text-white/80 hover:text-white'
+                }`}
+              >
+                <Globe size={14} /> Import HAR/JSON
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6">
+          {genTab === 'ai' ? (
+            <AIGeneratePanel
+              embedded
+              testType={testType ? TEST_TYPE_TO_AI_LABEL[testType] : ''}
+              complexity={COMPLEXITY_TO_AI_LABEL[complexity]}
+              loadProfile={{ profileType, stages, constantVus, constantDuration }}
+              envVarKeys={envVars.filter(e => e.key.trim()).map(e => e.key.trim())}
+              specContext={specContext}
+              disabled={!!blockedReason}
+              disabledReason={blockedReason ?? undefined}
+              onScriptGenerated={handleScriptGenerated}
+            />
+          ) : (
+            <HarToScriptPanel
+              embedded
+              loadProfile={{ profileType, stages, constantVus, constantDuration }}
+              disabled={!spec.name.trim()}
+              disabledReason={!spec.name.trim() ? 'Enter a Test Name (section A) before converting a HAR/JSON file.' : undefined}
+              onScriptGenerated={handleScriptGenerated}
+            />
+          )}
+        </div>
       </div>
 
       {/* G. Script Editor — shown whenever a script has been generated (AI panel) or  */}
@@ -1077,6 +1046,16 @@ export const TestAuthor: React.FC = () => {
             style={{
               minHeight: 420,
               fontFamily: "'JetBrains Mono','Fira Code','Cascadia Code','Courier New',monospace",
+            }}
+          />
+
+          {/* Ask the agent to tweak the script (AI-generated or HAR-imported) */}
+          <AgentRefinePanel
+            script={generatedScript}
+            onScriptUpdated={script => {
+              setGeneratedScript(script);
+              setScriptEdited(false);
+              sessionStorage.setItem('generatedK6Script', script);
             }}
           />
         </div>
