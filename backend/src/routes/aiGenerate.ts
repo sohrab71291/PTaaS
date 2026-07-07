@@ -7,7 +7,8 @@ import {
   getAnthropicClient, hasAnthropicCredentials, isOverloadedError,
   CLAUDE_MODEL, MAX_STREAM_ATTEMPTS, STREAM_BACKOFF_MS, stripCodeFences,
 } from '../services/anthropicClient';
-import { buildInfluxAndAuthBlock } from '../services/k6PromptBlocks';
+import { buildInfluxAndAuthBlock, DATA_PLACEHOLDER, injectCapturedData, extractCapturedData } from '../services/k6PromptBlocks';
+import { isBraceBalanced } from '../services/k6ScriptValidator';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
@@ -287,6 +288,132 @@ router.post('/ai-generate', upload.single('file'), async (req: Request, res: Res
       sendEvent('error', { message: "Claude's servers are overloaded right now. We retried a few times but it didn't recover — please try again in a minute." });
     } else {
       sendEvent('error', { message: err.message || 'AI generation failed' });
+    }
+    res.end();
+  }
+});
+
+function buildRefineSystemPrompt(hasCapturedData: boolean): string {
+  return `You are an expert performance engineer specializing in k6 load testing with InfluxDB v2 integration. You are given an existing k6 JavaScript script and a follow-up instruction describing a change the user wants made to it.
+
+MANDATORY RULES:
+1. Output ONLY the full, updated valid JavaScript script — no markdown, no code fences, no explanation text.
+2. Apply the requested change precisely while preserving everything else in the script that the instruction doesn't ask you to touch.
+3. Keep the script fully self-contained and runnable (imports, InfluxDB integration block, handleSummary, etc. all preserved).
+4. If the instruction is ambiguous, make the most reasonable interpretation for a k6 performance test script rather than asking for clarification.
+${hasCapturedData ? `5. The script contains the line ${DATA_PLACEHOLDER} in place of the real captured-request data (removed to keep this prompt a reasonable size). Leave that exact placeholder line in your output — do NOT delete it, move it, or attempt to redeclare/transcribe LOGIN_REQUEST/CAPTURED_REQUESTS yourself; the real data is spliced back in automatically afterward.` : ''}
+
+Output ONLY JavaScript, starting with the first import line.`;
+}
+
+async function streamRefinement(
+  scriptForPrompt: string,
+  prompt: string,
+  hasCapturedData: boolean,
+  sendEvent: (type: string, data: any) => void,
+): Promise<string> {
+  const userMessage = `Here is the current k6 script:\n\n\`\`\`javascript\n${scriptForPrompt}\n\`\`\`\n\nApply this change:\n"${prompt}"\n\nOutput ONLY the full updated JavaScript code.`;
+
+  let stream: Awaited<ReturnType<Anthropic['messages']['stream']>> | null = null;
+  for (let attempt = 0; attempt < MAX_STREAM_ATTEMPTS; attempt++) {
+    try {
+      stream = await getAnthropicClient().messages.stream({
+        model: CLAUDE_MODEL,
+        max_tokens: 8096,
+        system: buildRefineSystemPrompt(hasCapturedData),
+        messages: [{ role: 'user', content: userMessage }],
+      });
+      break;
+    } catch (err: any) {
+      if (isOverloadedError(err) && attempt < MAX_STREAM_ATTEMPTS - 1) {
+        sendEvent('status', { message: `Claude is currently overloaded — retrying (${attempt + 1}/${MAX_STREAM_ATTEMPTS - 1})…` });
+        await new Promise(r => setTimeout(r, STREAM_BACKOFF_MS[attempt]));
+        continue;
+      }
+      throw err;
+    }
+  }
+  if (!stream) throw new Error('Failed to start refinement after retries');
+
+  let fullScript = '';
+  for await (const chunk of stream) {
+    if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+      const text = chunk.delta.text;
+      fullScript += text;
+      sendEvent('chunk', { text });
+    }
+  }
+  return stripCodeFences(fullScript);
+}
+
+// POST /api/ai-refine — streaming SSE endpoint for iterative script tweaks
+router.post('/ai-refine', async (req: Request, res: Response) => {
+  const { currentScript, prompt } = req.body;
+
+  if (!hasAnthropicCredentials()) {
+    res.status(500).json({
+      error: 'Anthropic API credentials not configured. Set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) in backend/.env or as an environment variable.',
+    });
+    return;
+  }
+
+  if (!currentScript || !prompt) {
+    res.status(400).json({ error: 'currentScript and prompt are required' });
+    return;
+  }
+
+  // HAR-imported scripts embed the replayed calls as literal LOGIN_REQUEST/
+  // CAPTURED_REQUESTS constants, which can be hundreds of KB. Sending those
+  // through Claude and asking it to reproduce them verbatim guarantees
+  // truncation past max_tokens, producing invalid JS (see k6PromptBlocks.ts
+  // for the full rationale). Strip them out and splice the real data back in
+  // after refinement, exactly like /api/har-generate does for initial generation.
+  const extracted = extractCapturedData(currentScript);
+  const scriptForPrompt = extracted ? extracted.strippedScript : currentScript;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const sendEvent = (type: string, data: any) => {
+    res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+  };
+
+  try {
+    sendEvent('status', { message: `Acknowledged: "${prompt}"` });
+    sendEvent('status', { message: 'Analyzing current script…' });
+    sendEvent('status', { message: 'Applying requested changes…' });
+
+    let fullScript = await streamRefinement(scriptForPrompt, prompt, !!extracted, sendEvent);
+    if (extracted) fullScript = injectCapturedData(fullScript, extracted.dataBlock);
+
+    if (!isBraceBalanced(fullScript)) {
+      sendEvent('status', { message: 'Generated script failed a structural check — retrying once…' });
+      fullScript = await streamRefinement(scriptForPrompt, prompt, !!extracted, sendEvent);
+      if (extracted) fullScript = injectCapturedData(fullScript, extracted.dataBlock);
+
+      if (!isBraceBalanced(fullScript)) {
+        sendEvent('error', { message: 'Claude produced a script with mismatched braces twice in a row. Please try again — if this keeps happening, try a smaller or more specific change.' });
+        res.end();
+        return;
+      }
+    }
+
+    sendEvent('status', { message: 'Script updated successfully' });
+    sendEvent('complete', { script: fullScript });
+    res.end();
+  } catch (err: any) {
+    if (err.name === 'AbortError') { res.end(); return; }
+    if (err.status === 401) {
+      sendEvent('error', { message: 'Invalid Anthropic API key. Check your ANTHROPIC_API_KEY.' });
+    } else if (err.status === 429) {
+      sendEvent('error', { message: 'Rate limit reached. Please wait a moment and try again.' });
+    } else if (isOverloadedError(err)) {
+      sendEvent('error', { message: "Claude's servers are overloaded right now. We retried a few times but it didn't recover — please try again in a minute." });
+    } else {
+      sendEvent('error', { message: err.message || 'Refinement failed' });
     }
     res.end();
   }

@@ -5,7 +5,7 @@ import { parseHar } from '../services/harParser';
 import {
   ParsedTestCase, isAuthEntry, isAuthHeader, toUrlPath,
 } from '../services/k6FromTestCases';
-import { buildInfluxBlock, HANDLE_SUMMARY_BLOCK } from '../services/k6PromptBlocks';
+import { buildInfluxBlock, HANDLE_SUMMARY_BLOCK, DATA_PLACEHOLDER, injectCapturedData } from '../services/k6PromptBlocks';
 import { isBraceBalanced } from '../services/k6ScriptValidator';
 import {
   getAnthropicClient, hasAnthropicCredentials, isOverloadedError,
@@ -118,13 +118,6 @@ function describeLoadProfile(profile: LoadProfileConfig | null): string {
 ${stagesList}
   ]\n`;
 }
-
-// The placeholder Claude must leave right after its import statements. We
-// splice the real LOGIN_REQUEST / CAPTURED_REQUESTS constants in ourselves —
-// Claude never transcribes the captured-call data, which is what used to make
-// large captures prone to truncation/brace mismatches ("export only allowed in
-// global scope" from k6's goja engine). See injectCapturedData() below.
-const DATA_PLACEHOLDER = '/*__PERFOPS_CAPTURED_DATA__*/';
 
 function buildHarSystemPrompt(baseUrl: string | null, loadProfile: LoadProfileConfig | null, totalCalls: number, hasLogin: boolean): string {
   return `You are an expert performance engineer specializing in k6 load testing with InfluxDB v2 integration. You are writing a REPLAY HARNESS for a captured browser session (HAR export) — a small, fixed amount of code that iterates generically over an already-extracted array of API calls. You do NOT write one code block per captured call; the calls themselves are supplied to you as a runtime data array, not something you transcribe.
@@ -383,23 +376,6 @@ Generate the k6 replay harness now. Output ONLY JavaScript, starting with the fi
 
 function safeParseJson(content: string): unknown | null {
   try { return JSON.parse(content); } catch { return null; }
-}
-
-// Splices the real captured-request data into Claude's harness. Prefers the
-// placeholder Claude was told to leave; falls back to inserting right after the
-// last top-level `import ...;` line if the placeholder is missing for any reason.
-function injectCapturedData(script: string, dataBlock: string): string {
-  if (script.includes(DATA_PLACEHOLDER)) {
-    return script.replace(DATA_PLACEHOLDER, dataBlock);
-  }
-  const importRegex = /^import .*;\s*$/gm;
-  let lastImportEnd = -1;
-  let match: RegExpExecArray | null;
-  while ((match = importRegex.exec(script)) !== null) {
-    lastImportEnd = match.index + match[0].length;
-  }
-  if (lastImportEnd === -1) return `${dataBlock}\n\n${script}`;
-  return `${script.slice(0, lastImportEnd)}\n\n${dataBlock}\n${script.slice(lastImportEnd)}`;
 }
 
 async function streamHarness(

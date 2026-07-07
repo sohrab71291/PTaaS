@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import nodemailer from 'nodemailer';
+import { sendMail } from '../lib/mailer';
 
 const DATA_DIR = path.join(__dirname, '../../data');
 const FILE = path.join(DATA_DIR, 'notification-configs.json');
@@ -53,28 +53,6 @@ function readConfigs(): NotificationConfig[] {
 function writeConfigs(data: NotificationConfig[]): void {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(FILE, JSON.stringify(data, null, 2));
-}
-
-function buildSmtpTransport() {
-  const host = process.env.SMTP_HOST;
-  const port = parseInt(process.env.SMTP_PORT || '587', 10);
-  const user = process.env.SMTP_USER;
-  const pass = process.env.SMTP_PASS;
-  const from = process.env.SMTP_FROM || user || 'noreply@perfops.local';
-
-  if (!host) return null;
-  return { transport: nodemailer.createTransport({ host, port, auth: user && pass ? { user, pass } : undefined }), from };
-}
-
-async function sendEmail(recipients: string[], subject: string, html: string): Promise<{ ok: boolean; message: string }> {
-  const smtp = buildSmtpTransport();
-  if (!smtp) return { ok: false, message: 'SMTP not configured (set SMTP_HOST in .env)' };
-  try {
-    await smtp.transport.sendMail({ from: smtp.from, to: recipients.join(','), subject, html });
-    return { ok: true, message: `Email sent to ${recipients.join(', ')}` };
-  } catch (err: any) {
-    return { ok: false, message: err.message };
-  }
 }
 
 async function sendTeams(webhookUrl: string, payload: object): Promise<{ ok: boolean; message: string }> {
@@ -284,7 +262,7 @@ export const notificationService = {
     if (!shouldSend) return { ok: true, message: 'Trigger condition not met — skipped' };
 
     if (config.type === 'email') {
-      return sendEmail(
+      return sendMail(
         config.emailRecipients,
         `PerfOps: ${exec.specName} — ${exec.status.toUpperCase()}`,
         buildEmailHtml(exec),

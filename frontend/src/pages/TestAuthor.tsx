@@ -15,6 +15,7 @@ import { ToastContainer } from '../components/ToastContainer';
 import { useFetch } from '../hooks/useFetch';
 import { PreviewDrawer } from '../components/PreviewDrawer';
 import { AIGeneratePanel } from '../components/AIGeneratePanel';
+import { AgentRefinePanel } from '../components/AgentRefinePanel';
 import { HarToScriptPanel } from '../components/HarToScriptPanel';
 import { SloEditor } from '../components/SloEditor';
 import {
@@ -1045,6 +1046,16 @@ export const TestAuthor: React.FC = () => {
             style={{
               minHeight: 420,
               fontFamily: "'JetBrains Mono','Fira Code','Cascadia Code','Courier New',monospace",
+            }}
+          />
+
+          {/* Ask the agent to tweak the script (AI-generated or HAR-imported) */}
+          <AgentRefinePanel
+            script={generatedScript}
+            onScriptUpdated={script => {
+              setGeneratedScript(script);
+              setScriptEdited(false);
+              sessionStorage.setItem('generatedK6Script', script);
             }}
           />
         </div>

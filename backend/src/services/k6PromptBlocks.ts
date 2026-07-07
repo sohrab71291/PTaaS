@@ -324,3 +324,90 @@ export function buildInfluxAndAuthBlock(baseUrl: string | null): string {
 ${buildGenericAuthPatternBlock()}
 ${HANDLE_SUMMARY_BLOCK}`;
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// Captured-data placeholder splicing — shared by /api/har-generate (initial
+// generation) and /api/ai-refine (iterative edits). Scripts produced from a HAR
+// capture embed the replayed calls as literal LOGIN_REQUEST/CAPTURED_REQUESTS
+// constants, which can be hundreds of KB for a large capture. Claude must never
+// be asked to transcribe that data back out — it can't fit within any practical
+// max_tokens budget and the response gets cut off mid-array, producing invalid
+// JS that k6's goja engine reports opaquely as "export only allowed in global
+// scope" or similar. Instead: strip the two constants out before prompting,
+// have Claude work against a placeholder, then splice the real data back in.
+export const DATA_PLACEHOLDER = '/*__PERFOPS_CAPTURED_DATA__*/';
+
+// Splices the real captured-request data into a Claude-produced script. Prefers
+// the placeholder Claude was told to leave; falls back to inserting right after
+// the last top-level `import ...;` line if the placeholder is missing for any
+// reason (e.g. Claude dropped it despite instructions).
+export function injectCapturedData(script: string, dataBlock: string): string {
+  if (script.includes(DATA_PLACEHOLDER)) {
+    return script.replace(DATA_PLACEHOLDER, dataBlock);
+  }
+  const importRegex = /^import .*;\s*$/gm;
+  let lastImportEnd = -1;
+  let match: RegExpExecArray | null;
+  while ((match = importRegex.exec(script)) !== null) {
+    lastImportEnd = match.index + match[0].length;
+  }
+  if (lastImportEnd === -1) return `${dataBlock}\n\n${script}`;
+  return `${script.slice(0, lastImportEnd)}\n\n${dataBlock}\n${script.slice(lastImportEnd)}`;
+}
+
+// Finds the index of the `;` that terminates the value starting at `start`,
+// tracking {}/[] nesting depth and skipping over quoted string contents (so
+// braces/brackets/semicolons inside a captured payload string don't throw off
+// the count). Returns -1 if no terminating `;` is found at depth 0.
+function findStatementEnd(script: string, start: number): number {
+  let i = start;
+  const n = script.length;
+  let depth = 0;
+  while (i < n) {
+    const c = script[i];
+    if (c === '"' || c === '\'') {
+      const quote = c;
+      i++;
+      while (i < n && script[i] !== quote) { if (script[i] === '\\') i++; i++; }
+      i++;
+      continue;
+    }
+    if (c === '{' || c === '[') { depth++; i++; continue; }
+    if (c === '}' || c === ']') { depth--; i++; continue; }
+    if (c === ';' && depth <= 0) return i;
+    i++;
+  }
+  return -1;
+}
+
+// Extracts the verbatim `const LOGIN_REQUEST = ...;` and
+// `const CAPTURED_REQUESTS = ...;` statements from a HAR-generated script (in
+// whichever order they appear) and replaces them with DATA_PLACEHOLDER, so the
+// stripped script can be safely sent to Claude for refinement without asking it
+// to transcribe the captured data. Returns null if the script doesn't contain
+// both constants (e.g. a plain /api/ai-generate script with no captured data).
+export function extractCapturedData(script: string): { dataBlock: string; strippedScript: string } | null {
+  const loginMatch = script.match(/const\s+LOGIN_REQUEST\s*=/);
+  const reqMatch = script.match(/const\s+CAPTURED_REQUESTS\s*=/);
+  if (!loginMatch || loginMatch.index === undefined || !reqMatch || reqMatch.index === undefined) return null;
+
+  const loginSemi = findStatementEnd(script, loginMatch.index + loginMatch[0].length);
+  const reqSemi = findStatementEnd(script, reqMatch.index + reqMatch[0].length);
+  if (loginSemi === -1 || reqSemi === -1) return null;
+
+  const stmts = [
+    { start: loginMatch.index, end: loginSemi + 1 },
+    { start: reqMatch.index, end: reqSemi + 1 },
+  ].sort((a, b) => a.start - b.start);
+
+  const dataBlock = stmts.map(s => script.slice(s.start, s.end)).join('\n');
+  const firstStart = stmts[0].start;
+
+  let stripped = script;
+  for (const s of [...stmts].sort((a, b) => b.start - a.start)) {
+    stripped = stripped.slice(0, s.start) + stripped.slice(s.end);
+  }
+  stripped = stripped.slice(0, firstStart) + DATA_PLACEHOLDER + '\n' + stripped.slice(firstStart);
+
+  return { dataBlock, strippedScript: stripped };
+}
