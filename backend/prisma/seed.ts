@@ -24,20 +24,23 @@ function readJson(filename: string): any[] {
 
 async function seedAdminUser() {
   const email = process.env.SEED_ADMIN_EMAIL || 'admin@perfops.dev';
-  const password = process.env.SEED_ADMIN_PASSWORD || 'ChangeMe123!';
+  const password = process.env.SEED_ADMIN_PASSWORD || 'Password';
   const name = process.env.SEED_ADMIN_NAME || 'Admin';
 
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
-    console.log(`  Admin user already exists (${email}), skipping`);
-    return;
-  }
-
   const passwordHash = await bcrypt.hash(password, 12);
-  await prisma.user.create({
-    data: { email, passwordHash, name, role: 'ADMIN' },
+  const existing = await prisma.user.findUnique({ where: { email } });
+
+  await prisma.user.upsert({
+    where: { email },
+    create: { email, passwordHash, name, role: 'ADMIN' },
+    update: { passwordHash },
   });
-  console.log(`  Seeded default admin user: ${email} / ${password}`);
+
+  console.log(
+    existing
+      ? `  Admin user (${email}) already existed - password reset to seed default`
+      : `  Seeded default admin user: ${email} / ${password}`,
+  );
 }
 
 async function main() {
