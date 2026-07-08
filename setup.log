@@ -386,3 +386,85 @@ Coralogix (optional) configured
 
 
 
+=== PTaaS setup run: 07/07/2026 04:22:38 ===
+INFO  Chocolatey already installed.
+INFO  Node.js v20.19.0 already installed.
+INFO  PostgreSQL already installed.
+INFO  Installing InfluxDB v2...
+INFO  InfluxDB already provisioned on this host - reusing existing backend\.env token if present.
+INFO  Grafana already installed.
+INFO  K6 already installed.
+INFO  Installing Node dependencies...
+INFO  Creating backend\.env...
+WARN  InfluxDB was not auto-provisioned - connectivity will show 401 until INFLUXDB_TOKEN is fixed.
+OK    backend\.env created.
+FAIL  PostgreSQL database 'ptaas' failed: createdb: error: database creation failed: ERROR:  database "ptaas" already exists
+INFO  Running Prisma migrations...
+WARN  Port 3001 is already in use (node (PID 21248)) - assuming the backend is already running.
+FAIL  Admin user registration failed: The remote server returned an error: (409) Conflict.
+WARN  agent\.env exists but its AGENT_ID is not a valid, registered agent in the database - re-registering.
+OK    agent\.env written (ID: cmrag1chb0000e89stropqhbg).
+OK    Grafana dashboard synced: http://localhost:3000/d/adwnc6t98
+WARN  Node dependencies missing - running npm install...
+
+Component            Status        
+---------            ------        
+PostgreSQL           OK            
+InfluxDB             OK            
+InfluxDB token       NOT SET       
+Grafana              OK            
+k6 binary            OK            
+npm dependencies     MISSING       
+backend\.env         OK            
+Database schema      OK            
+Backend (if running) UP            
+Grafana API key      OK            
+Grafana dashboard    FAIL          
+Agent registration   OK            
+Coralogix (optional) not configured
+
+
+
+=== PTaaS setup run: 07/08/2026 04:11:19 ===
+WARN  GRAFANA_API_KEY was missing/invalid - minted a new one. Restart the backend to pick it up.
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              OK        
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Grafana API key      FIXED     
+Grafana dashboard    FAIL      
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
+=== PTaaS setup run: 07/08/2026 04:13:03 ===
+WARN  GRAFANA_URL in backend\.env didn't match the running Grafana instance (http://localhost:9999) - corrected it. Restart the backend to pick it up.
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              OK        
+GRAFANA_URL          FIXED     
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Grafana API key      OK        
+Grafana dashboard    FAIL      
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+

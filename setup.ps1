@@ -30,6 +30,14 @@ $LogFile = Join-Path $ScriptDir "setup.log"
 $script:Failures = @()
 $script:Warnings = @()
 
+# Grafana is deliberately kept off its 3000 default (that port is commonly
+# claimed by other local dev servers) and pinned to 9999 instead, matching
+# setup.sh's Mac/Linux behavior. Every Grafana URL/port in this script must
+# go through these two so they can never drift out of sync with each other
+# or with the GRAFANA_URL written into backend\.env.
+$script:GrafanaPort = 9999
+$script:GrafanaUrl  = "http://localhost:$script:GrafanaPort"
+
 function Write-Log($msg) { $msg | Out-File -FilePath $LogFile -Append -Encoding UTF8 }
 function Info    { param([string]$msg) Write-Host "[PTaaS] $msg" -ForegroundColor Cyan;    Write-Log "INFO  $msg" }
 function Success { param([string]$msg) Write-Host "[PTaaS] $msg" -ForegroundColor Green;   Write-Log "OK    $msg" }
@@ -150,21 +158,25 @@ function Test-GrafanaService {
 # future package version, or a manually-installed NSSM service, does provide
 # one).
 function Start-GrafanaProcess {
-    if (Test-TcpPort -Port 3000) { return $true }
+    if (Test-TcpPort -Port $script:GrafanaPort) { return $true }
     if (Test-GrafanaService) {
-        Start-Service Grafana -ErrorAction SilentlyContinue
-        return (Wait-ForHttp -Url "http://localhost:3000/api/health" -TimeoutSec 30)
+        Restart-Service Grafana -ErrorAction SilentlyContinue
+        return (Wait-ForHttp -Url "$script:GrafanaUrl/api/health" -TimeoutSec 30)
     }
     $homePath = Find-GrafanaHomePath
     if (-not $homePath) { return $false }
     $exePath = Join-Path $homePath "bin\grafana.exe"
     if (-not (Test-Path $exePath)) { return $false }
-    if (-not (Get-Process grafana -ErrorAction SilentlyContinue)) {
-        Start-Process -FilePath $exePath -ArgumentList @("server", "--homepath", $homePath) -WorkingDirectory $homePath -WindowStyle Hidden
-    }
+    # Any existing grafana.exe process is, by definition, not the one we want
+    # if it's not already answering on $script:GrafanaPort above - most often
+    # a stale process still bound to Grafana's built-in 3000 default from
+    # before custom.ini set http_port. Kill it so the relaunch below picks up
+    # the current config instead of silently doing nothing.
+    Get-Process grafana -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Process -FilePath $exePath -ArgumentList @("server", "--homepath", $homePath) -WorkingDirectory $homePath -WindowStyle Hidden
     # First-ever start runs ~700 one-time DB migrations (~20-30s); subsequent
     # starts are much faster, but give it the same generous budget either way.
-    return (Wait-ForHttp -Url "http://localhost:3000/api/health" -TimeoutSec 45)
+    return (Wait-ForHttp -Url "$script:GrafanaUrl/api/health" -TimeoutSec 45)
 }
 
 # Re-applies config file changes (custom.ini, provisioning/) - works whether
@@ -280,6 +292,105 @@ function Ensure-GrafanaApiKey {
         return $newKey
     }
     return $null
+}
+
+# influxd (both the chocolatey package and the plain-zip install under
+# C:\influxdata) stores its bolt/sqlite metadata under the current user's
+# profile by default - same location Find-InfluxdPath's caller starts the
+# daemon from.
+function Find-InfluxDataPath {
+    $path = Join-Path $env:USERPROFILE ".influxdbv2"
+    if (Test-Path $path) { return $path }
+    return $null
+}
+
+# Verifies a token actually authenticates against the *currently running*
+# InfluxDB instance - a token in backend\.env can drift out of sync with the
+# instance for the same reason GRAFANA_URL can: it was copied from another
+# machine, or the local instance's storage was reset/reinstalled without the
+# .env file being touched.
+function Test-InfluxToken {
+    param([string]$Token, [string]$Org)
+    if (-not $Token -or $Token -eq "CHANGE_ME" -or -not $Org) { return $false }
+    try {
+        Invoke-RestMethod -Uri "http://localhost:8086/api/v2/buckets?org=$Org&limit=1" `
+            -Headers @{ Authorization = "Token $Token" } -TimeoutSec 5 -ErrorAction Stop | Out-Null
+        return $true
+    } catch { return $false }
+}
+
+# Self-heals a broken InfluxDB auth token with zero manual steps. The old
+# behavior here was to warn and leave connectivity broken until someone
+# logged into the InfluxDB UI by hand - but on an already-provisioned
+# instance /api/v2/setup refuses to run again, and there's no way to mint a
+# new token without a credential nothing on the box still has. Instead: stop
+# influxd, move its local data store aside (nothing is deleted - a
+# timestamped backup is kept alongside it), restart fresh, and re-run
+# onboarding. Safe for the local single-user dev/test instance this script
+# manages; historical metrics in the old store are preserved in the backup
+# folder, not lost, and Postgres data (executions, reports, etc.) is
+# untouched since it lives in a separate database entirely.
+function Reset-InfluxDB {
+    param([string]$Org, [string]$Bucket)
+    Info "Resetting local InfluxDB store to recover from a missing/invalid token..."
+    Get-Process influxd -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+
+    $dataPath = Find-InfluxDataPath
+    if ($dataPath) {
+        $backupName = "$(Split-Path $dataPath -Leaf).bak-$(Get-Date -Format yyyyMMddHHmmss)"
+        Rename-Item -Path $dataPath -NewName $backupName -ErrorAction SilentlyContinue
+        Info "Backed up previous InfluxDB store to $(Join-Path (Split-Path $dataPath -Parent) $backupName)"
+    }
+
+    $influxdPath = Find-InfluxdPath
+    if (-not $influxdPath) { throw "influxd.exe not found - cannot reset InfluxDB" }
+    Start-Process $influxdPath -WindowStyle Hidden
+    if (-not (Wait-ForHttp -Url "http://localhost:8086/health" -TimeoutSec 20)) { throw "InfluxDB did not come back up after reset" }
+
+    $setupBody = @{
+        username = "admin"
+        password = -join ((1..20) | ForEach-Object { [char](Get-Random -Minimum 33 -Maximum 126) })
+        org      = $Org
+        bucket   = $Bucket
+    } | ConvertTo-Json
+    $setupResp = Invoke-RestMethod -Uri "http://localhost:8086/api/v2/setup" -Method POST -Body $setupBody -ContentType "application/json"
+    if (-not $setupResp.auth.token) { throw "InfluxDB reset but /api/v2/setup returned no token" }
+    Success "InfluxDB re-provisioned (org: $Org, bucket: $Bucket) - new token captured automatically."
+    return $setupResp.auth.token
+}
+
+# Writes/refreshes the Grafana provisioning file that lets the dashboard's
+# own panels query InfluxDB directly (separate from the backend's queries,
+# which go through INFLUXDB_TOKEN in backend\.env). Called both on first
+# install and whenever InfluxDB's token has just been (re)issued, so the two
+# never drift apart the way they had on this box before.
+function Set-GrafanaInfluxDatasource {
+    param([string]$Org, [string]$Bucket, [string]$Token)
+    if (-not $Token -or $Token -eq "CHANGE_ME") { return }
+    $confDir = Find-GrafanaConfDir
+    if (-not $confDir) { return }
+    $dsDir = Join-Path $confDir "provisioning\datasources"
+    New-Item -ItemType Directory -Path $dsDir -Force | Out-Null
+    $dsFile = Join-Path $dsDir "influxdb-ptaas.yaml"
+    @"
+apiVersion: 1
+datasources:
+  - name: InfluxDB PTaaS
+    type: influxdb
+    access: proxy
+    url: http://localhost:8086
+    jsonData:
+      version: Flux
+      organization: $Org
+      defaultBucket: $Bucket
+      httpMode: POST
+    secureJsonData:
+      token: $Token
+    isDefault: true
+    editable: true
+"@ | Set-Content $dsFile -Encoding UTF8
+    Restart-Grafana
 }
 
 function Find-PgBin {
@@ -403,38 +514,63 @@ function Invoke-Diagnostics {
     $results += [PSCustomObject]@{ Component = "InfluxDB"; Status = $(if ($influxOk) {"OK"} else {"FAIL"}) }
 
     # InfluxDB token validity (the most common recurring failure: token in
-    # backend/.env drifts from what the running influxd instance actually has)
+    # backend/.env drifts from what the running influxd instance actually
+    # has). Unlike a first-time install, an already-provisioned instance
+    # can't be re-onboarded via /api/v2/setup, and there's no saved
+    # credential on the box to mint a fresh token through by hand - so
+    # instead of just warning, self-heal via Reset-InfluxDB the same way the
+    # main provisioning step does.
     if ($influxOk -and (Test-Path "backend\.env")) {
-        $envLines = Get-Content "backend\.env"
-        $token = ($envLines | Where-Object { $_ -match '^INFLUXDB_TOKEN=' }) -replace '.*="(.*)"', '$1'
-        $org   = ($envLines | Where-Object { $_ -match '^INFLUXDB_ORG=' })   -replace '.*="(.*)"', '$1'
-        if ($token -and $token -ne "CHANGE_ME") {
+        $token  = Get-EnvVar -Path "backend\.env" -Key "INFLUXDB_TOKEN"
+        $org    = Get-EnvVar -Path "backend\.env" -Key "INFLUXDB_ORG"
+        $bucket = Get-EnvVar -Path "backend\.env" -Key "INFLUXDB_BUCKET"
+        if (Test-InfluxToken -Token $token -Org $org) {
+            $results += [PSCustomObject]@{ Component = "InfluxDB token"; Status = "OK" }
+        } elseif (-not $token -or $token -eq "CHANGE_ME") {
+            $results += [PSCustomObject]@{ Component = "InfluxDB token"; Status = "NOT SET" }
+        } else {
+            Warn "INFLUXDB_TOKEN in backend\.env is rejected by the running InfluxDB (HTTP 401) - self-healing..."
             try {
-                Invoke-RestMethod -Uri "http://localhost:8086/api/v2/buckets?org=$org&limit=1" `
-                    -Headers @{ Authorization = "Token $token" } -TimeoutSec 5 -ErrorAction Stop | Out-Null
-                $results += [PSCustomObject]@{ Component = "InfluxDB token"; Status = "OK" }
+                $newToken = Reset-InfluxDB -Org $org -Bucket $bucket
+                Set-EnvVar -Path "backend\.env" -Key "INFLUXDB_TOKEN" -Value $newToken
+                Set-GrafanaInfluxDatasource -Org $org -Bucket $bucket -Token $newToken
+                $results += [PSCustomObject]@{ Component = "InfluxDB token"; Status = "FIXED" }
+                Warn "Reset InfluxDB and wrote a fresh token to backend\.env - restart the backend to pick it up."
             } catch {
                 $results += [PSCustomObject]@{ Component = "InfluxDB token"; Status = "FAIL" }
-                Warn "INFLUXDB_TOKEN in backend\.env is rejected by the running InfluxDB (HTTP 401)."
-                Write-Host "         -> Fix: open http://localhost:8086, regenerate a token under Data > API Tokens," -ForegroundColor DarkYellow
-                Write-Host "           then update INFLUXDB_TOKEN in backend\.env and restart the backend." -ForegroundColor DarkYellow
+                Write-Host "         -> Fix: $($_.Exception.Message)" -ForegroundColor DarkYellow
             }
-        } else {
-            $results += [PSCustomObject]@{ Component = "InfluxDB token"; Status = "NOT SET" }
         }
     }
 
     # Grafana
-    $grafanaOk = Wait-ForHttp -Url "http://localhost:3000/api/health" -TimeoutSec 5
+    $grafanaOk = Wait-ForHttp -Url "$script:GrafanaUrl/api/health" -TimeoutSec 5
     if (-not $grafanaOk) {
-        Warn "Grafana not responding on :3000 - attempting to start it..."
+        Warn "Grafana not responding on :$script:GrafanaPort - attempting to start it..."
         $grafanaOk = Start-GrafanaProcess
         if (-not $grafanaOk) {
             Write-Host "         -> Fix: could not find/launch grafana.exe. Verify it's installed (choco install grafana -y)," -ForegroundColor DarkYellow
-            Write-Host "           or check for a port 3000 conflict: $(Get-PortOwner -Port 3000)" -ForegroundColor DarkYellow
+            Write-Host "           or check for a port $script:GrafanaPort conflict: $(Get-PortOwner -Port $script:GrafanaPort)" -ForegroundColor DarkYellow
         }
     }
     $results += [PSCustomObject]@{ Component = "Grafana"; Status = $(if ($grafanaOk) {"OK"} else {"FAIL"}) }
+
+    # GRAFANA_URL in backend\.env - the other half of the same drift that
+    # breaks the InfluxDB token above: a copied/older .env can point at a
+    # different port than the Grafana instance this script actually manages
+    # (pinned to $script:GrafanaPort), silently breaking every Grafana route
+    # (dashboard embed, sync) even while Grafana itself reports healthy.
+    $grafanaUrlStatus = "N/A"
+    if (Test-Path "backend\.env") {
+        if ((Get-EnvVar -Path "backend\.env" -Key "GRAFANA_URL") -eq $script:GrafanaUrl) {
+            $grafanaUrlStatus = "OK"
+        } else {
+            Set-EnvVar -Path "backend\.env" -Key "GRAFANA_URL" -Value $script:GrafanaUrl
+            $grafanaUrlStatus = "FIXED"
+            Warn "GRAFANA_URL in backend\.env didn't match the running Grafana instance ($script:GrafanaUrl) - corrected it. Restart the backend to pick it up."
+        }
+    }
+    $results += [PSCustomObject]@{ Component = "GRAFANA_URL"; Status = $grafanaUrlStatus }
 
     # k6 binary
     $k6Ok = [bool](Get-Command k6 -ErrorAction SilentlyContinue)
@@ -472,10 +608,10 @@ function Invoke-Diagnostics {
     $grafanaKeyStatus = "N/A"
     if ($grafanaOk -and (Test-Path "backend\.env")) {
         $currentKey = Get-EnvVar -Path "backend\.env" -Key "GRAFANA_API_KEY"
-        if (Test-GrafanaApiKey -GrafanaUrl "http://localhost:3000" -ApiKey $currentKey) {
+        if (Test-GrafanaApiKey -GrafanaUrl $script:GrafanaUrl -ApiKey $currentKey) {
             $grafanaKeyStatus = "OK"
         } else {
-            $newKey = New-GrafanaApiKey -GrafanaUrl "http://localhost:3000"
+            $newKey = New-GrafanaApiKey -GrafanaUrl $script:GrafanaUrl
             if ($newKey) {
                 Set-EnvVar -Path "backend\.env" -Key "GRAFANA_API_KEY" -Value $newKey
                 $grafanaKeyStatus = "FIXED"
@@ -498,13 +634,13 @@ function Invoke-Diagnostics {
         $dashboardUid = Get-DashboardUidFromFile
         if ($dashboardUid) {
             try {
-                Invoke-RestMethod -Uri "http://localhost:3000/api/dashboards/uid/$dashboardUid" -TimeoutSec 5 -ErrorAction Stop | Out-Null
+                Invoke-RestMethod -Uri "$script:GrafanaUrl/api/dashboards/uid/$dashboardUid" -TimeoutSec 5 -ErrorAction Stop | Out-Null
                 $dashboardStatus = "OK"
             } catch {
                 if ($backendUp) {
                     try {
                         Invoke-RestMethod -Uri "http://localhost:3001/api/grafana/sync-dashboard" -Method POST -TimeoutSec 15 -ErrorAction Stop | Out-Null
-                        Invoke-RestMethod -Uri "http://localhost:3000/api/dashboards/uid/$dashboardUid" -TimeoutSec 5 -ErrorAction Stop | Out-Null
+                        Invoke-RestMethod -Uri "$script:GrafanaUrl/api/dashboards/uid/$dashboardUid" -TimeoutSec 5 -ErrorAction Stop | Out-Null
                         $dashboardStatus = "FIXED"
                         Success "Re-synced PTaaS dashboard to Grafana."
                     } catch {
@@ -684,48 +820,72 @@ Step -Name "InfluxDB provisioning" -Remedy "Open http://localhost:8086 and compl
         } | ConvertTo-Json
         $setupResp  = Invoke-RestMethod -Uri "http://localhost:8086/api/v2/setup" `
             -Method POST -Body $setupBody -ContentType "application/json"
+        if (-not $setupResp.auth.token) { throw "/api/v2/setup returned no token" }
         $script:InfluxToken = $setupResp.auth.token
         Success "InfluxDB provisioned - token captured automatically."
     } else {
-        Info "InfluxDB already provisioned on this host - reusing existing backend\.env token if present."
+        # Already provisioned on this host - reuse the existing org/bucket
+        # names from backend\.env so a repair doesn't silently rename what
+        # the rest of the app (and the Grafana datasource below) expects.
+        $existingToken = $null; $existingOrg = $null; $existingBucket = $null
         if (Test-Path "backend\.env") {
-            $existingToken = (Get-Content "backend\.env" | Where-Object { $_ -match '^INFLUXDB_TOKEN=' }) -replace '.*="(.*)"', '$1'
-            $existingOrg   = (Get-Content "backend\.env" | Where-Object { $_ -match '^INFLUXDB_ORG=' })   -replace '.*="(.*)"', '$1'
-            if ($existingToken) { $script:InfluxToken = $existingToken }
-            if ($existingOrg)   { $script:InfluxOrg   = $existingOrg }
+            $existingToken  = Get-EnvVar -Path "backend\.env" -Key "INFLUXDB_TOKEN"
+            $existingOrg    = Get-EnvVar -Path "backend\.env" -Key "INFLUXDB_ORG"
+            $existingBucket = Get-EnvVar -Path "backend\.env" -Key "INFLUXDB_BUCKET"
+        }
+        if ($existingOrg)    { $script:InfluxOrg    = $existingOrg }
+        if ($existingBucket) { $script:InfluxBucket = $existingBucket }
+
+        # A token that's present but no longer accepted by the running
+        # instance (drifted from another machine, or the local store was
+        # reset outside this script) is the #1 recurring cause of the
+        # InfluxDB "401" connectivity failure - self-heal it here instead of
+        # carrying a dead token into backend\.env.
+        if (Test-InfluxToken -Token $existingToken -Org $script:InfluxOrg) {
+            Info "InfluxDB already provisioned on this host - existing backend\.env token is valid."
+            $script:InfluxToken = $existingToken
+        } else {
+            if ($existingToken) {
+                Warn "InfluxDB already provisioned on this host, but its backend\.env token is rejected (HTTP 401) - self-healing..."
+            } else {
+                Info "InfluxDB already provisioned on this host with no usable backend\.env token - self-healing..."
+            }
+            $script:InfluxToken = Reset-InfluxDB -Org $script:InfluxOrg -Bucket $script:InfluxBucket
         }
     }
 }
-$InfluxOrg = $script:InfluxOrg
+$InfluxOrg    = $script:InfluxOrg
+$InfluxBucket = $script:InfluxBucket
 if ($script:InfluxToken) { $InfluxToken = $script:InfluxToken }
 
 # -- 6. Grafana --------------------------------------------
+# Install only here - do NOT start Grafana yet. Its default port is 3000,
+# and starting it before custom.ini below sets $script:GrafanaPort would
+# mean the first boot claims 3000, requiring a kill+restart to actually move
+# it. Configuring the port before the very first start avoids that entirely.
 Step -Name "Grafana" -Retries 2 -Remedy "Install manually: choco install grafana -y" -Action {
     if (-not (Find-GrafanaHomePath) -and -not (Test-GrafanaService)) {
         Info "Installing Grafana..."
         choco install grafana -y
         Refresh-Path
+        if (-not (Find-GrafanaHomePath)) { throw "grafana.exe not found after install" }
     } else {
         Info "Grafana already installed."
     }
-    # The chocolatey "grafana" package does not register a Windows Service -
-    # it only unzips bin\grafana.exe. Start-GrafanaProcess prefers a real
-    # service if one exists (Test-GrafanaService), otherwise launches the
-    # exe directly. Either way this call is what actually brings Grafana up.
-    if (-not (Start-GrafanaProcess)) { throw "Grafana did not come up on :3000 after install" }
 }
 
-# Grafana keeps its own default port (3000). Rather than editing the fragile
-# defaults.ini with regex, drop a custom.ini override (Grafana merges this
-# automatically) enabling anonymous viewer access + iframe embedding - this is
-# what the PTaaS Dashboard page needs to embed Grafana panels without a login.
+# Rather than editing the fragile defaults.ini with regex, drop a custom.ini
+# override (Grafana merges this automatically) pinning the port to
+# $script:GrafanaPort and enabling anonymous viewer access + iframe embedding
+# - the latter is what the PTaaS Dashboard page needs to embed Grafana panels
+# without a login.
 $GrafanaConfDir = Find-GrafanaConfDir
 if ($GrafanaConfDir) {
     Step -Name "Grafana embedding config" -Action {
         $customIni = Join-Path $GrafanaConfDir "custom.ini"
         @"
 [server]
-http_port = 3000
+http_port = $script:GrafanaPort
 
 [security]
 allow_embedding = true
@@ -735,40 +895,28 @@ enabled = true
 org_name = Main Org.
 org_role = Viewer
 "@ | Set-Content $customIni -Encoding ASCII
-        Restart-Grafana
-    }
-
-    # Auto-provision the InfluxDB datasource so Grafana panels work with zero
-    # manual UI setup - this is the step that's manually redone most often
-    # whenever InfluxDB's token rotates.
-    if ($InfluxToken -and $InfluxToken -ne "CHANGE_ME") {
-        Step -Name "Grafana InfluxDB datasource" -Action {
-            $dsDir = Join-Path $GrafanaConfDir "provisioning\datasources"
-            New-Item -ItemType Directory -Path $dsDir -Force | Out-Null
-            $dsFile = Join-Path $dsDir "influxdb-ptaas.yaml"
-            @"
-apiVersion: 1
-datasources:
-  - name: InfluxDB PTaaS
-    type: influxdb
-    access: proxy
-    url: http://localhost:8086
-    jsonData:
-      version: Flux
-      organization: $InfluxOrg
-      defaultBucket: $InfluxBucket
-      httpMode: POST
-    secureJsonData:
-      token: $InfluxToken
-    isDefault: true
-    editable: true
-"@ | Set-Content $dsFile -Encoding UTF8
-            Restart-Grafana
-        }
     }
 }
-if (-not (Wait-ForHttp -Url "http://localhost:3000/api/health" -TimeoutSec 30)) {
-    Fail "Grafana did not respond on :3000 after configuration - check $LogFile. If no 'Grafana' Windows service exists, check for a stuck grafana.exe process or a port 3000 conflict: $(Get-PortOwner -Port 3000)"
+
+Step -Name "Grafana start" -Retries 2 -Remedy "Install manually: choco install grafana -y, then run bin\grafana.exe server --homepath <install dir>" -Action {
+    # The chocolatey "grafana" package does not register a Windows Service -
+    # it only unzips bin\grafana.exe. Start-GrafanaProcess prefers a real
+    # service if one exists (Test-GrafanaService), otherwise launches the
+    # exe directly. Either way this call is what actually brings Grafana up.
+    if (-not (Start-GrafanaProcess)) { throw "Grafana did not come up on :$script:GrafanaPort after install" }
+}
+
+# Auto-provision the InfluxDB datasource so Grafana panels work with zero
+# manual UI setup - this is the config that's manually redone most often
+# whenever InfluxDB's token rotates, and now also self-heals whenever
+# Reset-InfluxDB issues a new one above.
+if ($GrafanaConfDir -and $InfluxToken -and $InfluxToken -ne "CHANGE_ME") {
+    Step -Name "Grafana InfluxDB datasource" -Action {
+        Set-GrafanaInfluxDatasource -Org $InfluxOrg -Bucket $InfluxBucket -Token $InfluxToken
+    }
+}
+if (-not (Wait-ForHttp -Url "$script:GrafanaUrl/api/health" -TimeoutSec 30)) {
+    Fail "Grafana did not respond on :$script:GrafanaPort after configuration - check $LogFile. If no 'Grafana' Windows service exists, check for a stuck grafana.exe process or a port $script:GrafanaPort conflict: $(Get-PortOwner -Port $script:GrafanaPort)"
 }
 
 # -- 6a. Grafana API key + dashboard UID --------------------
@@ -776,7 +924,7 @@ if (-not (Wait-ForHttp -Url "http://localhost:3000/api/health" -TimeoutSec 30)) 
 # .env template can include them directly. Self-healing for existing
 # installs happens in -Diagnose instead, since patching an existing
 # backend\.env still requires a backend restart to take effect.
-$GrafanaApiKey = New-GrafanaApiKey -GrafanaUrl "http://localhost:3000"
+$GrafanaApiKey = New-GrafanaApiKey -GrafanaUrl $script:GrafanaUrl
 if (-not $GrafanaApiKey) {
     Warn "Could not auto-create a Grafana API key (admin password may have been changed from the default) - dashboard sync will be skipped until GRAFANA_API_KEY is set manually in backend\.env."
 }
@@ -866,7 +1014,7 @@ INFLUXDB_URL="http://localhost:8086"
 INFLUXDB_TOKEN="${InfluxToken}"
 INFLUXDB_ORG="${InfluxOrg}"
 INFLUXDB_BUCKET="${InfluxBucket}"
-GRAFANA_URL="http://localhost:3000"
+GRAFANA_URL="${script:GrafanaUrl}"
 GRAFANA_DASHBOARD_UID="${DashboardUid}"
 GRAFANA_API_KEY="$(if ($GrafanaApiKey) { $GrafanaApiKey } else { 'CHANGE_ME' })"
 "@
@@ -887,13 +1035,22 @@ CORALOGIX_APP_NAME="${CoralogixApp}"
     Warn "backend\.env already exists - skipping (re-run with that file removed to reconfigure)."
 
     # Even on an existing install, keep the Grafana dashboard wiring healed -
-    # these two are narrow, additive patches (not a full reconfigure) so it's
+    # these are narrow, additive patches (not a full reconfigure) so it's
     # safe to apply them even when the rest of the file is left alone.
+    # GRAFANA_URL in particular drifts whenever a backend\.env is copied from
+    # a machine that used a different port (or an older run of this script
+    # wrote 3000 before Grafana was pinned to $script:GrafanaPort) - Grafana
+    # itself is now always brought up on $script:GrafanaPort above, so the
+    # .env must match or every Grafana-dependent route silently breaks.
+    if ((Get-EnvVar -Path "backend\.env" -Key "GRAFANA_URL") -ne $script:GrafanaUrl) {
+        Set-EnvVar -Path "backend\.env" -Key "GRAFANA_URL" -Value $script:GrafanaUrl
+        Info "Corrected GRAFANA_URL in backend\.env to $script:GrafanaUrl."
+    }
     if ($DashboardUid -and -not (Get-EnvVar -Path "backend\.env" -Key "GRAFANA_DASHBOARD_UID")) {
         Set-EnvVar -Path "backend\.env" -Key "GRAFANA_DASHBOARD_UID" -Value $DashboardUid
         Info "Added missing GRAFANA_DASHBOARD_UID to backend\.env."
     }
-    if ($GrafanaApiKey -and -not (Test-GrafanaApiKey -GrafanaUrl "http://localhost:3000" -ApiKey (Get-EnvVar -Path "backend\.env" -Key "GRAFANA_API_KEY"))) {
+    if ($GrafanaApiKey -and -not (Test-GrafanaApiKey -GrafanaUrl $script:GrafanaUrl -ApiKey (Get-EnvVar -Path "backend\.env" -Key "GRAFANA_API_KEY"))) {
         Set-EnvVar -Path "backend\.env" -Key "GRAFANA_API_KEY" -Value $GrafanaApiKey
         Info "Added/refreshed GRAFANA_API_KEY in backend\.env."
     }
@@ -1029,7 +1186,7 @@ Write-Host "  URLs:"
 Write-Host "    Frontend   -> http://localhost:5173"
 Write-Host "    Backend    -> http://localhost:3001"
 Write-Host "    InfluxDB   -> http://localhost:8086  (org: $InfluxOrg / bucket: $InfluxBucket)"
-Write-Host "    Grafana    -> http://localhost:3000  (anonymous viewer access enabled)"
+Write-Host "    Grafana    -> $script:GrafanaUrl  (anonymous viewer access enabled)"
 Write-Host ""
 Write-Host "  Full log: $LogFile"
 Write-Host ""
