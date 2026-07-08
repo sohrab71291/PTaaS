@@ -386,3 +386,24 @@ Coralogix (optional) configured
 
 
 
+=== PTaaS setup run: 07/07/2026 04:45:17 ===
+WARN  Grafana not responding on :3000 - attempting to start it...
+
+Component            Status    
+---------            ------    
+PostgreSQL           OK        
+InfluxDB             OK        
+InfluxDB token       OK        
+Grafana              FAIL      
+k6 binary            OK        
+npm dependencies     OK        
+backend\.env         OK        
+Database schema      OK        
+Backend (if running) UP        
+Grafana API key      N/A       
+Grafana dashboard    N/A       
+Agent registration   OK        
+Coralogix (optional) configured
+
+
+
