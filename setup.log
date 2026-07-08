@@ -468,3 +468,65 @@ Coralogix (optional) configured
 
 
 
+=== PTaaS setup run: 07/08/2026 05:09:42 ===
+INFO  Chocolatey already installed.
+INFO  Node.js v20.19.0 already installed.
+INFO  PostgreSQL already installed.
+INFO  Installing InfluxDB v2...
+INFO  Starting InfluxDB...
+INFO  InfluxDB already provisioned on this host with no usable backend\.env token - self-healing...
+INFO  Resetting local InfluxDB store to recover from a missing/invalid token...
+INFO  Backed up previous InfluxDB store to C:\Users\Administrator\.influxdbv2.bak-20260708050958
+OK    InfluxDB re-provisioned (org: PTaaS, bucket: k6) - new token captured automatically.
+INFO  Grafana already installed.
+WARN  Could not auto-create a Grafana API key (admin password may have been changed from the default) - dashboard sync will be skipped until GRAFANA_API_KEY is set manually in backend\.env.
+INFO  K6 already installed.
+INFO  Installing Node dependencies...
+INFO  Creating backend\.env...
+INFO  Using auto-provisioned InfluxDB token (org: PTaaS, bucket: k6).
+OK    backend\.env created.
+FAIL  PostgreSQL database 'ptaas' failed: createdb: error: database creation failed: ERROR:  database "ptaas" already exists
+INFO  Running Prisma migrations...
+WARN  Port 3001 is already in use (node (PID 5916)) - assuming the backend is already running.
+=== PTaaS setup run: 07/08/2026 05:12:32 ===
+INFO  Chocolatey already installed.
+INFO  Node.js v20.19.0 already installed.
+INFO  PostgreSQL already installed.
+INFO  Installing InfluxDB v2...
+INFO  InfluxDB already provisioned on this host - existing backend\.env token is valid.
+INFO  Grafana already installed.
+WARN  Could not auto-create a Grafana API key (admin password may have been changed from the default) - dashboard sync will be skipped until GRAFANA_API_KEY is set manually in backend\.env.
+INFO  K6 already installed.
+INFO  Installing Node dependencies...
+WARN  backend\.env already exists - skipping (re-run with that file removed to reconfigure).
+FAIL  PostgreSQL database 'ptaas' failed: createdb: error: database creation failed: ERROR:  database "ptaas" already exists
+INFO  Running Prisma migrations...
+INFO  Starting backend temporarily to register admin user...
+FAIL  Admin user registration failed: The remote server returned an error: (409) Conflict.
+WARN  agent\.env exists but its AGENT_ID is not a valid, registered agent in the database - re-registering.
+OK    agent\.env written (ID: cmrbx76pz00008o9s1fy6apax).
+FAIL  Grafana dashboard sync failed: The remote server returned an error: (403) Forbidden.
+
+Component            Status        
+---------            ------        
+PostgreSQL           OK            
+InfluxDB             OK            
+InfluxDB token       OK            
+Grafana              OK            
+GRAFANA_URL          OK            
+k6 binary            OK            
+npm dependencies     OK            
+backend\.env         OK            
+Database schema      OK            
+Backend (if running) UP            
+Grafana API key      FAIL          
+Grafana dashboard    FAIL          
+Agent registration   OK            
+Coralogix (optional) not configured
+
+
+
+=== PTaaS setup run: 07/08/2026 05:15:53 ===
+INFO  Chocolatey already installed.
+INFO  Node.js v20.19.0 already installed.
+INFO  PostgreSQL already installed.

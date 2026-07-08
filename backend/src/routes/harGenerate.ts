@@ -16,7 +16,7 @@ const router = Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 200 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = '.' + file.originalname.split('.').pop()?.toLowerCase();
     if (['.har', '.json'].includes(ext)) cb(null, true);

@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { useDropzone } from 'react-dropzone';
+import { useDropzone, FileRejection } from 'react-dropzone';
 import {
   Upload, X, FileText, AlertCircle, CheckCircle,
   Loader2, Send, Copy, ChevronDown, ChevronUp, Globe, RotateCcw,
@@ -27,6 +27,8 @@ interface LoadProfileConfig {
   constantVus?: number;
   constantDuration?: string;
 }
+
+const MAX_HAR_FILE_SIZE_MB = 200;
 
 interface HarToScriptPanelProps {
   loadProfile?: LoadProfileConfig;
@@ -65,14 +67,24 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
     setStatus('idle');
   }, []);
 
+  const onDropRejected = useCallback((rejections: FileRejection[]) => {
+    const tooLarge = rejections.find(r => r.errors.some(e => e.code === 'file-too-large'));
+    if (tooLarge) {
+      setError(`${tooLarge.file.name} is too large (max ${MAX_HAR_FILE_SIZE_MB}MB per file).`);
+    } else {
+      setError(rejections[0]?.errors[0]?.message || 'File rejected.');
+    }
+  }, []);
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    onDropRejected,
     accept: {
       'application/json': ['.json', '.har'],
       'application/har+json': ['.har'],
     },
     maxFiles: 20,
-    maxSize: 50 * 1024 * 1024,
+    maxSize: MAX_HAR_FILE_SIZE_MB * 1024 * 1024,
   });
 
   const removeFile = (name: string) => {
