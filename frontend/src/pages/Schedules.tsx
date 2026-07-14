@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import {
   Calendar, Plus, Trash2, Play, Edit2, X, Loader2,
-  Clock, ToggleLeft, ToggleRight, Bell, Sliders,
+  Clock, ToggleLeft, ToggleRight, Bell, Sliders, ChevronDown, ChevronRight, History,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/ToastContainer';
 import { Sidebar } from '../components/Sidebar';
+import { StatusBadge } from '../components/StatusBadge';
 
 interface Schedule {
   id: string;
@@ -20,7 +21,14 @@ interface Schedule {
   createdAt: string;
   updatedAt: string;
   lastRunAt: string | null;
+  lastRunStatus: string | null;
   nextRunAt: string | null;
+}
+
+interface ScheduleExecution {
+  id: string;
+  status: string;
+  createdAt: string;
 }
 
 interface TestSpec {
@@ -418,6 +426,9 @@ export const Schedules: React.FC = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Schedule | null>(null);
   const [triggering, setTriggering] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [runHistory, setRunHistory] = useState<Record<string, ScheduleExecution[]>>({});
+  const [historyLoading, setHistoryLoading] = useState<string | null>(null);
   const { toasts, addToast, removeToast } = useToast();
 
   useEffect(() => {
@@ -451,7 +462,8 @@ export const Schedules: React.FC = () => {
     addToast('Schedule deleted', 'success');
   };
 
-  // Play: load spec k6 script into sessionStorage, set autoRun flag, navigate to Executor
+  // Load the spec's k6 script into the Executor page and auto-run it there,
+  // so the user lands on the live console/metrics view for the run.
   const handleTrigger = async (schedule: Schedule) => {
     setTriggering(schedule.id);
     try {
@@ -468,6 +480,25 @@ export const Schedules: React.FC = () => {
     } catch (err: any) {
       addToast(`Failed to load spec: ${err.message}`, 'error');
       setTriggering(null);
+    }
+  };
+
+  const toggleHistory = async (scheduleId: string) => {
+    if (expanded === scheduleId) {
+      setExpanded(null);
+      return;
+    }
+    setExpanded(scheduleId);
+    if (!runHistory[scheduleId]) {
+      setHistoryLoading(scheduleId);
+      try {
+        const execs = await (api as any).schedules.executions(scheduleId) as ScheduleExecution[];
+        setRunHistory(prev => ({ ...prev, [scheduleId]: execs }));
+      } catch (err: any) {
+        addToast(`Failed to load run history: ${err.message}`, 'error');
+      } finally {
+        setHistoryLoading(null);
+      }
     }
   };
 
@@ -520,68 +551,116 @@ export const Schedules: React.FC = () => {
         ) : (
           <div className="space-y-3">
             {schedules.map(s => (
-              <div key={s.id} className="bg-white rounded-xl border border-gray-200 p-5 flex items-center gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-semibold text-gray-900">{s.name}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                      {s.enabled ? 'Active' : 'Paused'}
-                    </span>
+              <div key={s.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="p-5 flex items-center gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-semibold text-gray-900">{s.name}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {s.enabled ? 'Active' : 'Paused'}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500">
+                      <span className="flex items-center gap-1">
+                        <Clock size={13} />
+                        <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono">{s.cronExpression}</code>
+                      </span>
+                      <span>Spec: <span className="text-gray-700 font-medium">{specName(s.specId)}</span></span>
+                      <span>Env: <span className="text-gray-700">{envName(s.environmentId)}</span></span>
+                      {s.enabled && s.nextRunAt && (
+                        <span className="text-xs text-gray-400">
+                          Next run {new Date(s.nextRunAt).toLocaleString()}
+                        </span>
+                      )}
+                      {s.lastRunAt && (
+                        <span className="flex items-center gap-1 text-xs text-gray-400">
+                          <span className={`w-1.5 h-1.5 rounded-full ${
+                            s.lastRunStatus === 'failed' ? 'bg-red-500'
+                              : s.lastRunStatus === 'skipped' ? 'bg-gray-400'
+                              : 'bg-green-500'
+                          }`} />
+                          Last run {new Date(s.lastRunAt).toLocaleString()}
+                        </span>
+                      )}
+                      {s.notificationConfigId && (
+                        <span className="flex items-center gap-1 text-xs text-blue-500">
+                          <Bell size={12} /> Alert configured
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500">
-                    <span className="flex items-center gap-1">
-                      <Clock size={13} />
-                      <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono">{s.cronExpression}</code>
-                    </span>
-                    <span>Spec: <span className="text-gray-700 font-medium">{specName(s.specId)}</span></span>
-                    <span>Env: <span className="text-gray-700">{envName(s.environmentId)}</span></span>
-                    {s.lastRunAt && (
-                      <span className="text-xs text-gray-400">
-                        Last run {new Date(s.lastRunAt).toLocaleString()}
-                      </span>
-                    )}
-                    {s.notificationConfigId && (
-                      <span className="flex items-center gap-1 text-xs text-blue-500">
-                        <Bell size={12} /> Alert configured
-                      </span>
-                    )}
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => toggleHistory(s.id)}
+                      title="Recent runs"
+                      className="flex items-center gap-1 text-xs text-gray-500 hover:text-brand-600 transition-colors px-2 py-1.5"
+                    >
+                      <History size={14} />
+                      {expanded === s.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                    <button
+                      onClick={() => handleToggle(s)}
+                      title={s.enabled ? 'Pause schedule' : 'Resume schedule'}
+                      className="text-gray-400 hover:text-brand-500 transition-colors"
+                    >
+                      {s.enabled ? <ToggleRight size={22} className="text-brand-500" /> : <ToggleLeft size={22} />}
+                    </button>
+                    <button
+                      onClick={() => handleTrigger(s)}
+                      disabled={triggering === s.id}
+                      title="Run now"
+                      className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-lg text-xs font-medium hover:bg-green-100 transition-colors disabled:opacity-40"
+                    >
+                      {triggering === s.id
+                        ? <Loader2 size={13} className="animate-spin" />
+                        : <Play size={13} />}
+                      Run Now
+                    </button>
+                    <button
+                      onClick={() => { setEditing(s); setModalOpen(true); }}
+                      title="Edit"
+                      className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
+                    >
+                      <Edit2 size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(s.id)}
+                      title="Delete"
+                      className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => handleToggle(s)}
-                    title={s.enabled ? 'Pause schedule' : 'Resume schedule'}
-                    className="text-gray-400 hover:text-brand-500 transition-colors"
-                  >
-                    {s.enabled ? <ToggleRight size={22} className="text-brand-500" /> : <ToggleLeft size={22} />}
-                  </button>
-                  <button
-                    onClick={() => handleTrigger(s)}
-                    disabled={triggering === s.id}
-                    title="Run now in Executor"
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-50 text-green-700 border border-green-200 rounded-lg text-xs font-medium hover:bg-green-100 transition-colors disabled:opacity-40"
-                  >
-                    {triggering === s.id
-                      ? <Loader2 size={13} className="animate-spin" />
-                      : <Play size={13} />}
-                    Run Now
-                  </button>
-                  <button
-                    onClick={() => { setEditing(s); setModalOpen(true); }}
-                    title="Edit"
-                    className="p-2 text-gray-400 hover:text-blue-600 transition-colors"
-                  >
-                    <Edit2 size={16} />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(s.id)}
-                    title="Delete"
-                    className="p-2 text-gray-400 hover:text-red-600 transition-colors"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
+                {expanded === s.id && (
+                  <div className="border-t border-gray-100 bg-gray-50 px-5 py-3">
+                    {historyLoading === s.id ? (
+                      <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                        <Loader2 size={13} className="animate-spin" /> Loading recent runs…
+                      </div>
+                    ) : !runHistory[s.id]?.length ? (
+                      <p className="text-xs text-gray-400 py-2">No runs yet for this schedule.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {runHistory[s.id].map(exec => (
+                          <div
+                            key={exec.id}
+                            onClick={() => navigate(`/report/${exec.id}`)}
+                            className="flex items-center justify-between gap-3 text-xs px-2 py-1.5 rounded-lg hover:bg-white cursor-pointer transition-colors"
+                          >
+                            <div className="flex items-center gap-2">
+                              <StatusBadge status={exec.status} />
+                              <span className="text-gray-500">{new Date(exec.createdAt).toLocaleString()}</span>
+                            </div>
+                            <span className="text-gray-400 font-mono">{exec.id}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

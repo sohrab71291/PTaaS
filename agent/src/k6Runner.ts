@@ -1,4 +1,4 @@
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execFile, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as https from 'https';
@@ -187,7 +187,19 @@ export class K6Runner {
 
   stop(): void {
     this.stopped = true;
-    this.process?.kill('SIGTERM');
+    const pid = this.process?.pid;
+    if (pid) {
+      if (process.platform === 'win32') {
+        // On Windows, `k6` often resolves to a Chocolatey/scoop shim executable
+        // that launches the real k6.exe as a child process. Killing just the
+        // shim (this.process) leaves the real k6 process running, orphaned,
+        // and it never reports back — so the agent stays stuck "busy" forever.
+        // taskkill /T kills the whole process tree, not just the shim.
+        execFile('taskkill', ['/pid', String(pid), '/T', '/F'], () => {});
+      } else {
+        this.process?.kill('SIGTERM');
+      }
+    }
     this.stopSystemMetrics();
     this.stopMetricsTail();
   }
@@ -792,14 +804,35 @@ export class K6Runner {
    * all scenarios use named exec functions. Auto-injects if missing.
    */
   private validateScript(script: string): string {
+    // The agent writes exactly one file per run (to os.tmpdir()) — there is no
+    // companion project structure alongside it. A script that imports a sibling
+    // module via a relative path (e.g. '../utils/httpRequests.js') will always
+    // fail inside k6 with an opaque "couldn't be found on local disk" error, since
+    // that file never exists next to the generated temp script. Fail fast here
+    // with a message that actually explains the constraint.
+    const relativeImports = [
+      ...new Set(
+        [...script.matchAll(/import\s+(?:[\w*\s{},]+\s+from\s+)?['"](\.\.?\/[^'"]+)['"]/g)]
+          .map(m => m[1]),
+      ),
+    ];
+    if (relativeImports.length > 0) {
+      throw new Error(
+        `Script imports local file(s) that this runner can't provide: ${relativeImports.join(', ')}. ` +
+        `Only single-file k6 scripts are supported — imports must come from 'k6', 'k6/x/*', or a full URL (e.g. https://jslib.k6.io/...), not a relative path.`,
+      );
+    }
+
     // k6 exposes DELETE as http.del() — 'delete' is a reserved JavaScript keyword
     // so http.delete() doesn't exist in the k6 runtime. Replace it unconditionally
     // so previously-saved scripts and AI-generated scripts all work correctly.
     let s = script.replace(/\bhttp\.delete\s*\(/g, 'http.del(');
 
-    const hasDefault =
-      s.includes('export default function') ||
-      s.includes('export default async function');
+    // Matches any default export form — function, async function, or arrow
+    // (`export default async () => {}`, `export default () => {}`, etc).
+    // Checking only the function-keyword forms missed arrow-style default
+    // exports and appended a second `export default`, which is a SyntaxError.
+    const hasDefault = /\bexport\s+default\b/.test(s);
 
     if (!hasDefault) {
       console.warn('[K6Runner] Script missing export default function — auto-injecting');

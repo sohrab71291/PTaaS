@@ -89,6 +89,33 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
 // key: executionId, value: WebSocket
 export const frontendClients = new Map<string, WebSocket>();
 
+// Buffers every message sent to an execution's frontend WS, keyed by executionId.
+// The frontend only opens its WebSocket *after* POST /api/executor/run resolves —
+// for scripts that fail almost instantly (e.g. an unresolvable import), the agent
+// can send job_error/job_complete before that socket exists, so frontendClients.get()
+// finds nothing and the real error text is silently dropped with no way to recover
+// it. This buffer lets a late-connecting client replay everything it missed instead
+// of only seeing the generic "Execution complete. Exit code: N" replay message.
+// Cleared ~10 minutes after the execution finishes to bound memory.
+const executionLogBuffers = new Map<string, any[]>();
+const EXECUTION_BUFFER_MAX = 500;
+
+function sendToExecution(executionId: string, payload: any): void {
+  const buf = executionLogBuffers.get(executionId) ?? [];
+  buf.push(payload);
+  if (buf.length > EXECUTION_BUFFER_MAX) buf.shift();
+  executionLogBuffers.set(executionId, buf);
+
+  const clientWs = frontendClients.get(executionId);
+  if (clientWs?.readyState === WebSocket.OPEN) {
+    clientWs.send(JSON.stringify(payload));
+  }
+}
+
+function scheduleExecutionBufferCleanup(executionId: string): void {
+  setTimeout(() => executionLogBuffers.delete(executionId), 10 * 60 * 1000).unref();
+}
+
 // Rolling metrics accumulated from job_update events — used as fallback
 // when the agent sends summary:null in job_complete
 const rollingMetrics = new Map<string, {
@@ -131,24 +158,43 @@ executorWss.on('connection', async (ws: WebSocket, req) => {
     return;
   }
 
-  // Race condition guard: if the job already finished before the WS connected, replay the final state
+  // Race condition guard: if the job already finished before the WS connected, replay
+  // everything that was buffered (the real log lines/error text included) instead of
+  // just a generic synthetic message — see executionLogBuffers above for why this matters.
   if (exec.status === 'pass' || exec.status === 'fail' || exec.status === 'complete') {
-    ws.send(JSON.stringify({
-      type: 'complete',
-      timestamp: Date.now(),
-      data: { exitCode: exec.status === 'pass' ? 0 : 1, summary: null },
-    }));
+    const buffered = executionLogBuffers.get(executionId);
+    if (buffered?.length) {
+      for (const payload of buffered) ws.send(JSON.stringify(payload));
+    } else {
+      ws.send(JSON.stringify({
+        type: 'complete',
+        timestamp: Date.now(),
+        data: { exitCode: exec.status === 'pass' ? 0 : 1, summary: null },
+      }));
+    }
     ws.close();
     return;
   }
   if (exec.status === 'failed') {
-    ws.send(JSON.stringify({
-      type: 'error',
-      timestamp: Date.now(),
-      data: { message: 'Execution failed before connection was established' },
-    }));
+    const buffered = executionLogBuffers.get(executionId);
+    if (buffered?.length) {
+      for (const payload of buffered) ws.send(JSON.stringify(payload));
+    } else {
+      ws.send(JSON.stringify({
+        type: 'error',
+        timestamp: Date.now(),
+        data: { message: 'Execution failed before connection was established' },
+      }));
+    }
     ws.close();
     return;
+  }
+
+  // The job may already be running with some log lines buffered from before this
+  // socket connected (same race as above, just not yet terminal) — replay those too.
+  const alreadyBuffered = executionLogBuffers.get(executionId);
+  if (alreadyBuffered?.length) {
+    for (const payload of alreadyBuffered) ws.send(JSON.stringify(payload));
   }
 
   frontendClients.set(executionId, ws);
@@ -231,10 +277,7 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
         break;
 
       case 'job_update': {
-        const clientWs = frontendClients.get(payload.executionId);
-        if (clientWs?.readyState === WebSocket.OPEN) {
-          clientWs.send(JSON.stringify(payload.update));
-        }
+        sendToExecution(payload.executionId, payload.update);
         // Accumulate rolling metrics from the live stream
         if (payload.update?.type === 'metric' && payload.update.data) {
           const d   = payload.update.data;
@@ -256,22 +299,17 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
 
       case 'job_complete': {
         const { executionId, exitCode, summary, thresholdResults = [], checkResults = [] } = payload;
-        const clientWs = frontendClients.get(executionId);
 
         // Helper: send a log line to the executor console
         const sendLog = (text: string) => {
-          if (clientWs?.readyState === WebSocket.OPEN) {
-            clientWs.send(JSON.stringify({ type: 'log', timestamp: Date.now(), data: { line: text } }));
-          }
+          sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: text } });
         };
 
         // Helper: notify the frontend which pipeline stage just changed, so
         // the test-suite card can render a live progress bar (Script Generation >
         // Script Execution > PostgreSQL Updated > InfluxDB Updated > Published to Grafana).
         const sendStage = (stage: string, status: 'done' | 'error' | 'skipped') => {
-          if (clientWs?.readyState === WebSocket.OPEN) {
-            clientWs.send(JSON.stringify({ type: 'stage', timestamp: Date.now(), data: { stage, status } }));
-          }
+          sendToExecution(executionId, { type: 'stage', timestamp: Date.now(), data: { stage, status } });
         };
         sendStage('script_execution', 'done');
 
@@ -470,13 +508,12 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
         }
 
         // ── 3. Signal completion to frontend ──────────────────────────────────
-        if (clientWs?.readyState === WebSocket.OPEN) {
-          clientWs.send(JSON.stringify({
-            type: 'complete',
-            timestamp: Date.now(),
-            data: { exitCode, summary },
-          }));
-        }
+        sendToExecution(executionId, {
+          type: 'complete',
+          timestamp: Date.now(),
+          data: { exitCode, summary },
+        });
+        scheduleExecutionBufferCleanup(executionId);
 
         agentRegistry.setStatus(agentId, 'online');
         await prisma.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => {});
@@ -485,14 +522,12 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
 
       case 'job_error': {
         const { executionId, message } = payload;
-        const clientWs = frontendClients.get(executionId);
-        if (clientWs?.readyState === WebSocket.OPEN) {
-          clientWs.send(JSON.stringify({
-            type: 'error',
-            timestamp: Date.now(),
-            data: { message },
-          }));
-        }
+        sendToExecution(executionId, {
+          type: 'error',
+          timestamp: Date.now(),
+          data: { message },
+        });
+        scheduleExecutionBufferCleanup(executionId);
         await prisma.execution.update({
           where: { id: executionId },
           data: { status: 'fail', finishedAt: new Date() },

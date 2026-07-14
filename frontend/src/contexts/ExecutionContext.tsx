@@ -206,8 +206,11 @@ export function ExecutionProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const hasDefault = script.includes('export default function') ||
-                       script.includes('export default async function');
+    // Matches any default export form — function, async function, or arrow
+    // (`export default async () => {}`, `export default () => {}`, etc).
+    // Checking only the function-keyword forms missed arrow-style default
+    // exports and appended a second `export default`, which is a SyntaxError.
+    const hasDefault = /\bexport\s+default\b/.test(script);
     if (!hasDefault) {
       script = script + "\n\n// Auto-injected by PerfOps\nexport default function() {}";
       addConsoleLine('[PerfOps] ⚠ Auto-injected missing `export default function() {}`.', false);

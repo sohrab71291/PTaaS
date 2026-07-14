@@ -91,6 +91,7 @@ export const api = {
     update: (id: string, data: unknown) => request(`/schedules/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id: string) => request(`/schedules/${id}`, { method: 'DELETE' }),
     triggerNow: (id: string) => request(`/schedules/${id}/trigger`, { method: 'POST' }),
+    executions: (id: string) => request(`/schedules/${id}/executions`),
   },
   notifications: {
     list: () => request('/notifications'),
