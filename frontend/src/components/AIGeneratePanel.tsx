@@ -41,15 +41,17 @@ interface AIGeneratePanelProps {
   disabled?: boolean;
   disabledReason?: string;
   embedded?: boolean;
+  credentialBatchId?: string | null;
 }
 
 export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
   onScriptGenerated, testType, complexity, loadProfile, envVarKeys,
-  specContext, disabled, disabledReason, embedded,
+  specContext, disabled, disabledReason, embedded, credentialBatchId,
 }) => {
   const [file, setFile]                       = useState<File | null>(null);
   const [pastedContent, setPastedContent]     = useState('');
   const [inputMode, setInputMode]             = useState<'file' | 'paste'>('file');
+  const [useCsvCredentials, setUseCsvCredentials] = useState(false);
   const [status, setStatus]                   = useState<'idle' | 'generating' | 'complete' | 'error'>('idle');
   const [statusMessage, setStatusMessage]     = useState('');
   const [streamingScript, setStreamingScript] = useState('');
@@ -65,7 +67,7 @@ export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
   }, []);
 
   const ALLOWED_EXTS = ['.csv', '.xls', '.xlsx', '.yaml', '.yml', '.txt'];
-  const MAX_FILE_BYTES = 50 * 1024 * 1024;
+  const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -118,6 +120,10 @@ export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
     formData.append('loadProfile', JSON.stringify(loadProfile));
     if (envVarKeys.length) formData.append('envVarKeys', JSON.stringify(envVarKeys));
     formData.append('specContext', JSON.stringify(specContext));
+    if (useCsvCredentials) {
+      formData.append('useCsvCredentials', 'true');
+      if (credentialBatchId) formData.append('credentialBatchId', credentialBatchId);
+    }
 
     try {
       const token = localStorage.getItem('auth_token');
@@ -316,6 +322,23 @@ export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
           </div>
         )}
       </div>
+
+      {/* CSV-based login credentials toggle */}
+      <label className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 bg-gray-50 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={useCsvCredentials}
+          onChange={e => setUseCsvCredentials(e.target.checked)}
+          className="mt-0.5 accent-purple-500"
+        />
+        <span>
+          <span className="block text-sm font-medium text-gray-700">Use CSV-based login credentials</span>
+          <span className="block text-xs text-gray-500 mt-0.5">
+            Generates the script to pull a per-VU pool of login URL/username/password from the
+            credentials CSV uploaded above, instead of a single shared login.
+          </span>
+        </span>
+      </label>
 
       {/* Mandatory-fields notice */}
       {disabled && disabledReason && (

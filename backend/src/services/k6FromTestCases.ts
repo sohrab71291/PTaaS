@@ -24,6 +24,15 @@ export interface ParsedTestCase {
   // pairs that must be sent as application/x-www-form-urlencoded, NOT
   // JSON.stringify'd — see harParser.ts. Undefined/'json' = send as JSON body.
   payloadType?: 'json' | 'form';
+  // ID correlation (see harParser.ts applyIdCorrelation): if this call's
+  // captured response contained an id-like value that later captured calls
+  // reference by that exact literal (e.g. a created resource's id showing up
+  // in later /contents/{id}/... paths), those later calls' `url`/`payload`
+  // have the literal replaced with a `{{token:capturedValue}}` placeholder,
+  // and THIS call is tagged with the token + the JSON path to re-extract the
+  // real value from its own response at replay time — so replays correlate
+  // the actual created id instead of replaying the stale capture-time literal.
+  producesVars?: { token: string; jsonPath: string }[];
 }
 
 function safeName(name: string): string {

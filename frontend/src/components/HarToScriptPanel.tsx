@@ -36,6 +36,7 @@ interface HarToScriptPanelProps {
   disabled?: boolean;
   disabledReason?: string;
   embedded?: boolean;
+  credentialBatchId?: string | null;
 }
 
 export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
@@ -44,8 +45,10 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
   disabled,
   disabledReason,
   embedded,
+  credentialBatchId,
 }) => {
   const [files, setFiles] = useState<File[]>([]);
+  const [useCsvCredentials, setUseCsvCredentials] = useState(false);
   const [status, setStatus] = useState<'idle' | 'generating' | 'complete' | 'error'>('idle');
   const [statusMessage, setStatusMessage] = useState('');
   const [streamingScript, setStreamingScript] = useState('');
@@ -109,6 +112,10 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
     const formData = new FormData();
     for (const f of files) formData.append('files', f);
     if (loadProfile) formData.append('loadProfile', JSON.stringify(loadProfile));
+    if (useCsvCredentials) {
+      formData.append('useCsvCredentials', 'true');
+      if (credentialBatchId) formData.append('credentialBatchId', credentialBatchId);
+    }
 
     try {
       const token = localStorage.getItem('auth_token');
@@ -283,6 +290,23 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
           </div>
         )}
       </div>
+
+      {/* CSV-based login credentials toggle */}
+      <label className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 bg-gray-50 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={useCsvCredentials}
+          onChange={e => setUseCsvCredentials(e.target.checked)}
+          className="mt-0.5 accent-teal-500"
+        />
+        <span>
+          <span className="block text-sm font-medium text-gray-700">Use CSV-based login credentials</span>
+          <span className="block text-xs text-gray-500 mt-0.5">
+            Generates the script to pull a per-VU pool of login URL/username/password from the
+            credentials CSV uploaded above, instead of a single shared login.
+          </span>
+        </span>
+      </label>
 
       {/* Validation warning */}
       {disabled && disabledReason && (

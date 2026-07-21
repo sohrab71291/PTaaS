@@ -428,9 +428,11 @@ export class K6Runner {
   private injectLoadProfile(config: RunnerConfig): string {
     const profileType = config.profileType ?? 'staged';
 
-    // For staged mode we must have at least one stage
+    // For staged mode we must have at least one stage — the script's own
+    // load profile (e.g. an env-driven default) is left untouched, but still
+    // deduped in case it somehow contains more than one `options` export.
     if (profileType === 'staged' && (!config.stages || config.stages.length === 0)) {
-      return config.script;
+      return this.dedupeOptionsBlocks(config.script);
     }
 
     // ── Collect ALL named exec functions ──────────────────────────────────────
@@ -566,7 +568,7 @@ export class K6Runner {
    * if the script has no options block or no thresholds property.
    */
   private extractThresholdsBlock(script: string): string | null {
-    const optionsMatch = script.match(/export\s+const\s+options\s*=/);
+    const optionsMatch = script.match(/export\s+(?:const|let|var)\s+options\s*=/);
     if (!optionsMatch || optionsMatch.index === undefined) return null;
 
     const optionsBraceStart = script.indexOf('{', optionsMatch.index);
@@ -601,16 +603,62 @@ export class K6Runner {
   }
 
   /**
-   * Removes the `export const options = { ... };` block from a K6 script.
+   * Removes EVERY `export const/let/var options = { ... };` block from a K6
+   * script — not just the first. A single leftover declaration (from a
+   * generation glitch, or simply because the original script used `let`/`var`
+   * instead of `const`) plus the block this class inserts afterward both
+   * count as exports named `options`, which k6's goja module loader rejects
+   * outright with "Duplicate export name 'options'" before running a single
+   * line — so this must be exhaustive, not "strip the first match and stop".
    * Uses brace-counting to handle deeply nested objects correctly.
    */
   private stripOptionsBlock(script: string): string {
-    const match = script.match(/export\s+const\s+options\s*=/);
-    if (!match || match.index === undefined) return script;
+    const re = /export\s+(?:const|let|var)\s+options\s*=/;
+    let result = script;
 
-    const braceStart = script.indexOf('{', match.index);
-    if (braceStart === -1) return script;
+    while (true) {
+      const match = result.match(re);
+      if (!match || match.index === undefined) break;
 
+      const braceStart = result.indexOf('{', match.index);
+      if (braceStart === -1) break;
+
+      let depth = 0;
+      let braceEnd = -1;
+      for (let i = braceStart; i < result.length; i++) {
+        if (result[i] === '{') depth++;
+        else if (result[i] === '}') {
+          if (--depth === 0) { braceEnd = i; break; }
+        }
+      }
+      if (braceEnd === -1) break;
+
+      // Consume optional trailing semicolon and blank lines
+      let end = braceEnd + 1;
+      while (end < result.length && result[end] === ';') end++;
+      while (end < result.length && (result[end] === '\n' || result[end] === '\r')) end++;
+
+      result = (result.slice(0, match.index).trimEnd() + '\n' + result.slice(end)).trimStart();
+    }
+
+    return result;
+  }
+
+  /**
+   * Defense-in-depth for the branch below that returns the script UNCHANGED
+   * (no scenario rebuild) — if that untouched script happens to already
+   * contain more than one `options` export, k6 refuses to load it at all.
+   * Keeps the first declaration (matches this codebase's own generation
+   * prompts, which mandate a single options block placed right after
+   * imports) and drops any later ones.
+   */
+  private dedupeOptionsBlocks(script: string): string {
+    const re = /export\s+(?:const|let|var)\s+options\s*=/g;
+    const count = (script.match(re) ?? []).length;
+    if (count <= 1) return script;
+
+    const firstMatch = /export\s+(?:const|let|var)\s+options\s*=/.exec(script)!;
+    const braceStart = script.indexOf('{', firstMatch.index);
     let depth = 0;
     let braceEnd = -1;
     for (let i = braceStart; i < script.length; i++) {
@@ -619,14 +667,14 @@ export class K6Runner {
         if (--depth === 0) { braceEnd = i; break; }
       }
     }
-    if (braceEnd === -1) return script;
+    if (braceEnd === -1) return script; // malformed — leave as-is, will fail loudly either way
 
-    // Consume optional trailing semicolon and blank lines
-    let end = braceEnd + 1;
-    while (end < script.length && script[end] === ';') end++;
-    while (end < script.length && (script[end] === '\n' || script[end] === '\r')) end++;
+    let firstBlockEnd = braceEnd + 1;
+    if (script[firstBlockEnd] === ';') firstBlockEnd++;
 
-    return (script.slice(0, match.index).trimEnd() + '\n' + script.slice(end)).trimStart();
+    const before = script.slice(0, firstBlockEnd);
+    const rest   = this.stripOptionsBlock(script.slice(firstBlockEnd));
+    return before + '\n' + rest.trimStart();
   }
 
   /**

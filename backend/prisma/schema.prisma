@@ -124,6 +124,21 @@ model Schedule {
   executions           Execution[]
 }
 
+model ExecutionCredential {
+  id          String   @id @default(cuid())
+  batchId     String
+  executionId String?
+  loginUrl    String
+  username    String
+  password    String
+  instanceName String?
+  rowIndex    Int
+  createdAt   DateTime @default(now())
+
+  @@index([batchId])
+  @@index([executionId])
+}
+
 model Agent {
   id         String      @id @default(cuid())
   name       String

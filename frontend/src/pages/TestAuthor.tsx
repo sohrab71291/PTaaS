@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useDropzone } from 'react-dropzone';
 import {
   ChevronDown, ChevronUp, Save, Eye, Calendar,
   GitBranch, Plus, Trash2,
   Code2, Copy, RotateCcw, Send, Loader2, Sparkles, Globe,
+  AlertCircle,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { TestSpec, Header } from '../types';
@@ -121,6 +123,72 @@ export const TestAuthor: React.FC = () => {
   const [constantDuration, setConstantDuration] = useState('1m');
   const [envVars, setEnvVars] = useState<EnvVar[]>([]);
 
+  // Login credentials CSV — uploaded here so it can gate script generation;
+  // cached in Postgres by the backend and picked up by the Executor at run
+  // time via credentialBatchId (see stashForExecutor/storeExecutionSettings).
+  const [credentialBatchId, setCredentialBatchId] = useState<string | null>(null);
+  const [credentialFileName, setCredentialFileName] = useState<string | null>(null);
+  const [credentialCount, setCredentialCount] = useState(0);
+  const [credentialUploading, setCredentialUploading] = useState(false);
+  const [credentialError, setCredentialError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const bid = sessionStorage.getItem('generatedK6ScriptCredentialBatchId');
+    const fn = sessionStorage.getItem('generatedK6ScriptCredentialFileName');
+    const cnt = sessionStorage.getItem('generatedK6ScriptCredentialCount');
+    if (bid) setCredentialBatchId(bid);
+    if (fn) setCredentialFileName(fn);
+    if (cnt) setCredentialCount(parseInt(cnt, 10) || 0);
+  }, []);
+
+  const onDropCredentials = useCallback(async (files: File[]) => {
+    const f = files[0];
+    if (!f) return;
+    setCredentialError(null);
+    setCredentialUploading(true);
+    try {
+      const form = new FormData();
+      form.append('file', f);
+      const token = localStorage.getItem('auth_token');
+      const res = await fetch('/api/executor/credentials', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to upload credentials CSV');
+      setCredentialBatchId(data.batchId);
+      setCredentialFileName(f.name);
+      setCredentialCount(data.count);
+      sessionStorage.setItem('generatedK6ScriptCredentialBatchId', data.batchId);
+      sessionStorage.setItem('generatedK6ScriptCredentialFileName', f.name);
+      sessionStorage.setItem('generatedK6ScriptCredentialCount', String(data.count));
+    } catch (e: any) {
+      setCredentialError(e.message || 'Failed to upload credentials CSV');
+      setCredentialBatchId(null);
+      setCredentialFileName(null);
+      setCredentialCount(0);
+    } finally {
+      setCredentialUploading(false);
+    }
+  }, []);
+
+  const { getRootProps: getCredRootProps, getInputProps: getCredInputProps, isDragActive: isCredDragActive } = useDropzone({
+    onDrop: onDropCredentials,
+    accept: { 'text/csv': ['.csv'], 'application/vnd.ms-excel': ['.csv'] },
+    multiple: false,
+  });
+
+  const clearCredentials = () => {
+    setCredentialBatchId(null);
+    setCredentialFileName(null);
+    setCredentialCount(0);
+    setCredentialError(null);
+    sessionStorage.removeItem('generatedK6ScriptCredentialBatchId');
+    sessionStorage.removeItem('generatedK6ScriptCredentialFileName');
+    sessionStorage.removeItem('generatedK6ScriptCredentialCount');
+  };
+
   // Tracks whether anything has changed since the last successful save —
   // drives the "save before running?" prompt when sending to the Executor.
   const [dirty, setDirty] = useState(false);
@@ -170,6 +238,7 @@ export const TestAuthor: React.FC = () => {
     if (!spec.request.url.trim()) return 'Enter a Request URL (section C) before generating a script.';
     if (spec.checks.filter((c: string) => c.trim()).length === 0) return 'Add at least one Check (section D) before generating a script.';
     if (Object.keys(spec.thresholds).length === 0) return 'Add at least one Threshold (section D) before generating a script.';
+    if (!credentialBatchId) return 'Upload a Login Credentials CSV before generating a script.';
     return null;
   };
   const blockedReason = generationBlockedReason();
@@ -235,6 +304,8 @@ export const TestAuthor: React.FC = () => {
     envVars.filter(e => e.key.trim()).forEach(e => { envObj[e.key] = e.value; });
     if (Object.keys(envObj).length) sessionStorage.setItem('generatedK6ScriptEnvVars', JSON.stringify(envObj));
     else sessionStorage.removeItem('generatedK6ScriptEnvVars');
+    if (credentialBatchId) sessionStorage.setItem('generatedK6ScriptCredentialBatchId', credentialBatchId);
+    else sessionStorage.removeItem('generatedK6ScriptCredentialBatchId');
   };
 
   // Shared completion handler for both Section F generators (AI-from-config and
@@ -913,6 +984,33 @@ export const TestAuthor: React.FC = () => {
         </div>
       </div>
 
+      {/* Login Credentials CSV — required before a script can be generated */}
+      <div className="mt-4 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Login Credentials CSV *</label>
+          <span className="text-xs text-gray-400">Required columns: URL, Username, Password, InstanceName — one row per VU</span>
+        </div>
+        {credentialBatchId ? (
+          <div className="flex items-center gap-2">
+            <span className="bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 text-xs text-green-700">
+              ✓ {credentialFileName} — {credentialCount} credential{credentialCount === 1 ? '' : 's'} loaded
+            </span>
+            <button type="button" onClick={clearCredentials}
+              className="text-xs text-gray-500 hover:text-red-600 px-2 py-1 rounded border border-gray-200 hover:border-red-300">
+              Remove
+            </button>
+          </div>
+        ) : (
+          <div {...getCredRootProps()} className={`border-2 border-dashed rounded-lg px-4 py-2 text-center cursor-pointer text-xs transition-colors ${isCredDragActive ? 'border-brand-500 bg-brand-50' : 'border-gray-300 hover:border-brand-400 hover:bg-gray-50'}`}>
+            <input {...getCredInputProps()} />
+            {credentialUploading
+              ? <span className="text-gray-500">Uploading…</span>
+              : <span className="text-gray-500">Drop credentials .csv file or click to browse — required to generate a script</span>}
+          </div>
+        )}
+        {credentialError && <p className="text-xs text-red-600 mt-1.5">{credentialError}</p>}
+      </div>
+
       {/* F. Script Generation — AI-from-config vs. HAR/JSON import, in separate tabs */}
       <div className="mt-4 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className={`px-6 py-4 ${genTab === 'ai' ? 'bg-gradient-to-r from-purple-600 to-indigo-600' : 'bg-gradient-to-r from-teal-600 to-cyan-600'}`}>
@@ -960,14 +1058,22 @@ export const TestAuthor: React.FC = () => {
               disabled={!!blockedReason}
               disabledReason={blockedReason ?? undefined}
               onScriptGenerated={handleScriptGenerated}
+              credentialBatchId={credentialBatchId}
             />
           ) : (
             <HarToScriptPanel
               embedded
               loadProfile={{ profileType, stages, constantVus, constantDuration }}
-              disabled={!spec.name.trim()}
-              disabledReason={!spec.name.trim() ? 'Enter a Test Name (section A) before converting a HAR/JSON file.' : undefined}
+              disabled={!spec.name.trim() || !credentialBatchId}
+              disabledReason={
+                !spec.name.trim()
+                  ? 'Enter a Test Name (section A) before converting a HAR/JSON file.'
+                  : !credentialBatchId
+                    ? 'Upload a Login Credentials CSV before converting a HAR/JSON file.'
+                    : undefined
+              }
               onScriptGenerated={handleScriptGenerated}
+              credentialBatchId={credentialBatchId}
             />
           )}
         </div>

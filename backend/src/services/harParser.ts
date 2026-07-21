@@ -16,6 +16,13 @@ const SKIP_URL_PATTERNS = [
   // Third-party chat/support widgets — incidentally captured whenever they're
   // embedded on the page under test, not part of the app itself.
   /intercom\.io/i,
+  // RUM/session-replay telemetry beacons — e.g. Coralogix's browser SDK fires
+  // a burst of these on every page interaction. Real app APIs never target
+  // this domain, and left unfiltered these repeated beacons can outnumber the
+  // actual captured calls several-to-one, burying them in both the Captured
+  // Requests preview and the generated script's replay list.
+  /rum-ingress-coralogix\.com/i,
+  /coralogix\.com\/(browser|logs)/i,
   /localhost:8086\/api\/v2\/write/i,   // InfluxDB write — internal
   /\/api\/v2\/(write|query)/i,         // InfluxDB — internal
   /\/api\/grafana-proxy/i,             // Grafana proxy — internal
@@ -43,6 +50,7 @@ interface HarEntry {
   };
   response?: {
     status?: number;
+    content?: { text?: string; mimeType?: string };
   };
   time?: number;
 }
@@ -77,6 +85,119 @@ function dedupeKey(method: string, url: string): string {
     .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '/{id}')
     .replace(/\/\d{4,}/g, '/{id}');
   return `${method.toUpperCase()} ${path}`;
+}
+
+// ── ID correlation ─────────────────────────────────────────────────────────
+//
+// A captured session is a stateful CRUD flow: a POST creates a resource and
+// returns its id, then later captured calls reference that exact id in their
+// URL (e.g. /contents/786451/fields) or payload. Replaying those later calls
+// with the literal capture-time id verbatim will drift the moment the id
+// changes for any reason (fresh run creates a different id, an earlier
+// replay's own DELETE removed the captured id, etc.) — producing 100%
+// failures on every downstream call even though the flow itself is fine.
+//
+// This pass finds those literal-id links between captured calls and rewrites
+// the later ones to reference a `{{token:capturedValue}}` placeholder instead
+// of the bare literal, while tagging the producing call with which JSON path
+// in ITS OWN response to re-extract the real value from at replay time. The
+// generated k6 script (see harGenerate.ts REPLAY HARNESS PATTERN) resolves
+// these placeholders per-iteration from the actual response of the producing
+// call, falling back to the captured literal only if extraction fails.
+
+const ID_KEY_RE = /(^id$|Id$|_id$)/i;
+
+interface IdCandidate { jsonPath: string; value: string }
+
+// Recursively collects {key path, value} pairs for fields that look like ids
+// (numeric or numeric-string values under a key literally named "id" or
+// ending in "Id"/"_id"). Depth-limited and capped to keep this cheap even on
+// large captured response bodies.
+function collectIdCandidates(body: unknown, prefix = '', depth = 0, out: IdCandidate[] = []): IdCandidate[] {
+  if (body == null || depth > 3 || out.length > 25 || typeof body !== 'object') return out;
+  if (Array.isArray(body)) {
+    if (body.length > 0) collectIdCandidates(body[0], prefix ? `${prefix}.0` : '0', depth + 1, out);
+    return out;
+  }
+  for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const isIdLike = (typeof value === 'number' && Number.isFinite(value))
+      || (typeof value === 'string' && /^\d+$/.test(value));
+    if (isIdLike && ID_KEY_RE.test(key) && String(value).length >= 2) {
+      out.push({ jsonPath: path, value: String(value) });
+    } else if (value && typeof value === 'object' && depth < 3) {
+      collectIdCandidates(value, path, depth + 1, out);
+    }
+  }
+  return out;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Replaces `literal` with `replacement` only where it appears as a standalone
+// token (path segment, JSON value, etc.) — not as a substring of a longer
+// number — so e.g. correlating "786451" never touches "17864510".
+function substituteLiteral(text: string, literal: string, replacement: string): { text: string; count: number } {
+  const re = new RegExp(`(?<=[/:"=&?\\s,{]|^)${escapeRegExp(literal)}(?=[/",}=&\\s]|$)`, 'g');
+  let count = 0;
+  const replaced = text.replace(re, () => { count++; return replacement; });
+  return { text: replaced, count };
+}
+
+function tokenNameFromPath(jsonPath: string): string {
+  const last = jsonPath.split('.').pop() || 'id';
+  return last.replace(/[^a-zA-Z0-9]/g, '') || 'id';
+}
+
+// Placeholder format is deliberately alnum/underscore-only, NOT `{{token}}` —
+// curly braces get percent-encoded by the WHATWG URL parser (toUrlPath() in
+// k6FromTestCases.ts round-trips url through `new URL(...)`), which would
+// silently corrupt the placeholder into `%7B%7D...` before the replay harness
+// ever sees it. `__CORR_<token>_<fallbackDigits>__` survives URL parsing
+// unchanged since underscores/digits/letters are all unreserved characters.
+// Exported so harGenerate.ts's prompt can document the exact regex the
+// generated script must use to parse it back out at runtime.
+export const CORRELATION_PLACEHOLDER_RE = /__CORR_([A-Za-z0-9]+)_(\d+)__/g;
+
+// Mutates testCases in place: for every id-like value found in a call's
+// captured response, if any LATER call's url/payload contains that exact
+// literal, both are rewritten to use a shared `__CORR_<token>_<literal>__`
+// placeholder and the producing call is tagged via producesVars so the replay
+// harness knows to re-extract the real value from its own response at runtime.
+export function applyIdCorrelation(testCases: ParsedTestCase[], responseBodies: (unknown | null)[]): void {
+  let tokenCounter = 0;
+
+  for (let i = 0; i < testCases.length; i++) {
+    if (testCases[i].method.toUpperCase() === 'GET') continue; // only mutating calls create new resources worth correlating
+    const body = responseBodies[i];
+    if (!body) continue;
+
+    for (const cand of collectIdCandidates(body)) {
+      const token = `${tokenNameFromPath(cand.jsonPath)}${++tokenCounter}`;
+      const placeholder = `__CORR_${token}_${cand.value}__`;
+      let matched = false;
+
+      for (let j = i + 1; j < testCases.length; j++) {
+        const tc = testCases[j];
+        const urlResult = substituteLiteral(tc.url, cand.value, placeholder);
+        let payloadResult: { text: string; count: number } | null = null;
+        if (tc.payload) payloadResult = substituteLiteral(tc.payload, cand.value, placeholder);
+
+        if (urlResult.count > 0 || (payloadResult && payloadResult.count > 0)) {
+          tc.url = urlResult.text;
+          if (payloadResult) tc.payload = payloadResult.text;
+          matched = true;
+        }
+      }
+
+      if (matched) {
+        const producer = testCases[i];
+        (producer.producesVars ??= []).push({ token, jsonPath: cand.jsonPath });
+      }
+    }
+  }
 }
 
 export interface HarParseResult {
@@ -123,6 +244,7 @@ export function parseHar(content: string, filename = 'file', opts: ParseHarOptio
 
   const seen = new Map<string, boolean>();
   const testCases: ParsedTestCase[] = [];
+  const responseBodies: (unknown | null)[] = [];
   let skipped = 0;
 
   for (const entry of entries) {
@@ -208,10 +330,26 @@ export function parseHar(content: string, filename = 'file', opts: ParseHarOptio
       ...(cookieNames.length ? { cookieNames } : {}),
       ...(payloadType ? { payloadType } : {}),
     });
+
+    // Parsed alongside testCases (not dedupe-filtered above) so indices stay
+    // aligned 1:1 for the correlation pass below.
+    let responseBody: unknown | null = null;
+    const respContent = entry.response?.content;
+    if (respContent?.text && (respContent.mimeType ?? '').toLowerCase().includes('json')) {
+      try { responseBody = JSON.parse(respContent.text); } catch { /* not JSON — no candidates */ }
+    }
+    responseBodies.push(responseBody);
   }
 
   if (testCases.length === 0) {
     warnings.push(`${filename}: all ${entries.length} entries were filtered out (static assets, duplicates, or internal calls)`);
+  }
+
+  // Only meaningful for the full, sequential capture (dedupe disabled) used by
+  // the AI-driven HAR→k6 replay flow — the deduped one-call-per-endpoint flow
+  // doesn't replay calls in session order, so literal-id correlation doesn't apply.
+  if (!dedupe && testCases.length > 0) {
+    applyIdCorrelation(testCases, responseBodies);
   }
 
   return { testCases, warnings, skipped };
