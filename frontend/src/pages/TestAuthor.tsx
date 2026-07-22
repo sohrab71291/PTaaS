@@ -16,7 +16,7 @@ import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/ToastContainer';
 import { useFetch } from '../hooks/useFetch';
 import { PreviewDrawer } from '../components/PreviewDrawer';
-import { AIGeneratePanel } from '../components/AIGeneratePanel';
+import { AIGeneratePanel, StoredFile } from '../components/AIGeneratePanel';
 import { AgentRefinePanel } from '../components/AgentRefinePanel';
 import { HarToScriptPanel } from '../components/HarToScriptPanel';
 import { SloEditor } from '../components/SloEditor';
@@ -24,6 +24,9 @@ import {
   TestType, Complexity, TestTypeProfile, TEST_TYPE_PROFILES,
   Stage, EnvVar, TEST_TYPE_TO_AI_LABEL, COMPLEXITY_TO_AI_LABEL,
 } from '../lib/testProfiles';
+import { ScriptSpecSnapshot, buildScriptSpecSnapshot, computeSpecDiff } from '../lib/specDiff';
+
+interface StoredFileWithSource extends StoredFile { source: 'ai' | 'har'; }
 
 const DEFAULT_SPEC: Omit<TestSpec, 'id' | 'createdAt' | 'updatedAt' | 'lastRunStatus' | 'lastRunAt'> = {
   name: '',
@@ -189,6 +192,21 @@ export const TestAuthor: React.FC = () => {
     sessionStorage.removeItem('generatedK6ScriptCredentialCount');
   };
 
+  // Source files that generatedScript was produced from (test-case file for
+  // the AI-generate tab, HAR/JSON captures for the import tab) — persisted
+  // with the suite so re-opening it for edits doesn't force a re-upload
+  // before "Generate" works again.
+  const [aiFile, setAiFile] = useState<StoredFile | null>(null);
+  const [harFiles, setHarFiles] = useState<StoredFile[]>([]);
+
+  // Snapshot of the spec fields that affect the script, taken whenever the
+  // script is (re)generated or loaded — diffed against current form state to
+  // detect suite edits that haven't been reflected in the script yet.
+  const [scriptSpecSnapshot, setScriptSpecSnapshot] = useState<ScriptSpecSnapshot | null>(null);
+  const [syncingScript, setSyncingScript] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncAbortRef = useRef<AbortController | null>(null);
+
   // Tracks whether anything has changed since the last successful save —
   // drives the "save before running?" prompt when sending to the Executor.
   const [dirty, setDirty] = useState(false);
@@ -242,6 +260,94 @@ export const TestAuthor: React.FC = () => {
     return null;
   };
   const blockedReason = generationBlockedReason();
+
+  // Builds the current spec snapshot used to detect drift from the last
+  // generated/loaded script (see scriptSpecSnapshot above).
+  const currentSnapshot = useCallback((): ScriptSpecSnapshot => buildScriptSpecSnapshot({
+    name: spec.name,
+    request: spec.request,
+    checks: spec.checks,
+    thresholds: spec.thresholds,
+    profileType, stages, constantVus, constantDuration,
+    envVars,
+    slos: (spec as any).slos ?? [],
+    testType,
+    complexity,
+  }), [spec, profileType, stages, constantVus, constantDuration, envVars, testType, complexity]);
+
+  // Non-empty only once a script exists and the suite has since drifted from
+  // the snapshot it was generated/loaded against.
+  const specDiffSinceScript = generatedScript && scriptSpecSnapshot
+    ? computeSpecDiff(scriptSpecSnapshot, currentSnapshot())
+    : [];
+
+  const handleSyncScript = async () => {
+    if (!generatedScript || specDiffSinceScript.length === 0 || syncingScript) return;
+    setSyncingScript(true);
+    setSyncError(null);
+    syncAbortRef.current = new AbortController();
+
+    const prompt =
+      `Apply ONLY the following test-suite configuration changes to this k6 script, preserving everything else (structure, comments, unrelated logic) exactly as-is:\n` +
+      specDiffSinceScript.map(d => `- ${d}`).join('\n');
+
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch('/api/ai-refine', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ currentScript: generatedScript, prompt }),
+        signal: syncAbortRef.current.signal,
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Request failed');
+      }
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === 'chunk') {
+              accumulated += event.text;
+            } else if (event.type === 'complete') {
+              const clean = event.script || accumulated;
+              setGeneratedScript(clean);
+              setScriptSnapshot(clean);
+              setScriptEdited(false);
+              sessionStorage.setItem('generatedK6Script', clean);
+              setScriptSpecSnapshot(currentSnapshot());
+              addToast('Script updated to match the test suite changes.', 'success');
+            } else if (event.type === 'error') {
+              throw new Error(event.message);
+            }
+          } catch (parseErr: any) {
+            if (parseErr.message !== 'Unexpected end of JSON input') throw parseErr;
+          }
+        }
+      }
+    } catch (e: any) {
+      if (e.name === 'AbortError') return;
+      setSyncError(e.message || 'Failed to sync script with suite changes');
+      addToast(e.message || 'Failed to sync script with suite changes', 'error');
+    } finally {
+      setSyncingScript(false);
+    }
+  };
 
   // Section A/C/D/E context — sent alongside B's testType/complexity/loadProfile
   // to /api/ai-generate so the generated script reflects the entire spec.
@@ -322,6 +428,7 @@ export const TestAuthor: React.FC = () => {
     setGeneratedScript(script);
     setScriptSnapshot(script);
     setScriptEdited(false);
+    setScriptSpecSnapshot(currentSnapshot());
   };
 
   // Load existing spec if editing
@@ -330,19 +437,29 @@ export const TestAuthor: React.FC = () => {
       api.testSpecs.get(id).then((s: any) => {
         const {
           id: _id, createdAt: _c, updatedAt: _u, lastRunStatus: _ls, lastRunAt: _la,
-          generatedScript: gs, testType: tt, complexity: cx, envVars: ev, ...rest
+          generatedScript: gs, testType: tt, complexity: cx, envVars: ev, uploadedFiles: uf, ...rest
         } = s;
         setSpec(rest);
         setSavedId(id);
         if (tt) setTestType(tt);
         if (cx) setComplexity(cx);
-        if (Array.isArray(ev) && ev.length) setEnvVars(ev);
+        const loadedEnvVars = (Array.isArray(ev) && ev.length) ? ev : [];
+        if (loadedEnvVars.length) setEnvVars(loadedEnvVars);
         const lp = rest.loadProfile;
+        let loadedProfileType: 'staged' | 'constant' = 'staged';
+        let loadedStages = stages;
+        let loadedConstantVus = constantVus;
+        let loadedConstantDuration = constantDuration;
         if (lp?.type === 'constant') {
+          loadedProfileType = 'constant';
+          loadedConstantVus = lp.constantVus || constantVus;
+          loadedConstantDuration = lp.constantDuration || constantDuration;
           setProfileType('constant');
           if (lp.constantVus) setConstantVus(lp.constantVus);
           if (lp.constantDuration) setConstantDuration(lp.constantDuration);
         } else if (Array.isArray(lp?.stages) && lp.stages.length) {
+          loadedProfileType = 'staged';
+          loadedStages = lp.stages;
           setProfileType('staged');
           setStages(lp.stages);
         }
@@ -351,6 +468,27 @@ export const TestAuthor: React.FC = () => {
           setScriptSnapshot(gs);
           setScriptEdited(false);
           sessionStorage.setItem('generatedK6Script', gs);
+          // Baseline the diff-detection snapshot against exactly what's on
+          // disk (not React state, which hasn't flushed these setters yet).
+          setScriptSpecSnapshot(buildScriptSpecSnapshot({
+            name: rest.name,
+            request: rest.request,
+            checks: rest.checks,
+            thresholds: rest.thresholds,
+            profileType: loadedProfileType,
+            stages: loadedStages,
+            constantVus: loadedConstantVus,
+            constantDuration: loadedConstantDuration,
+            envVars: loadedEnvVars,
+            slos: rest.slos ?? [],
+            testType: tt ?? null,
+            complexity: cx ?? 'medium',
+          }));
+        }
+        if (Array.isArray(uf)) {
+          const ai = uf.find((f: StoredFileWithSource) => f.source === 'ai');
+          setAiFile(ai ? { name: ai.name, content: ai.content, mimeType: ai.mimeType } : null);
+          setHarFiles(uf.filter((f: StoredFileWithSource) => f.source === 'har').map((f: StoredFileWithSource) => ({ name: f.name, content: f.content, mimeType: f.mimeType })));
         }
         skipDirtyCheck.current = true;
         setDirty(false);
@@ -383,6 +521,10 @@ export const TestAuthor: React.FC = () => {
     if (!spec.name.trim()) { addToast('Name is required', 'error'); return null; }
     setSaving(true);
     try {
+      const uploadedFiles: StoredFileWithSource[] = [
+        ...(aiFile ? [{ ...aiFile, source: 'ai' as const }] : []),
+        ...harFiles.map(f => ({ ...f, source: 'har' as const })),
+      ];
       const payload = {
         ...spec,
         loadProfile: buildLoadProfile(),
@@ -390,6 +532,7 @@ export const TestAuthor: React.FC = () => {
         complexity,
         envVars: envVars.filter(e => e.key.trim()),
         generatedScript: generatedScript ?? null,
+        uploadedFiles,
       };
       let result: any;
       if (isEdit && savedId) {
@@ -1059,6 +1202,8 @@ export const TestAuthor: React.FC = () => {
               disabledReason={blockedReason ?? undefined}
               onScriptGenerated={handleScriptGenerated}
               credentialBatchId={credentialBatchId}
+              initialFile={aiFile}
+              onFileChange={setAiFile}
             />
           ) : (
             <HarToScriptPanel
@@ -1074,6 +1219,8 @@ export const TestAuthor: React.FC = () => {
               }
               onScriptGenerated={handleScriptGenerated}
               credentialBatchId={credentialBatchId}
+              initialFiles={harFiles}
+              onFilesChange={setHarFiles}
             />
           )}
         </div>
@@ -1137,6 +1284,36 @@ export const TestAuthor: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Suite-changed banner — shown whenever section A-E edits have drifted   */}
+          {/* from the spec the current script was generated/loaded against. "Sync"  */}
+          {/* sends only the itemized diff to /api/ai-refine, which is instructed to */}
+          {/* touch just those lines rather than regenerate the script from scratch. */}
+          {specDiffSinceScript.length > 0 && (
+            <div className="flex items-start gap-3 px-5 py-3 bg-amber-50 border-b border-amber-200">
+              <AlertCircle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-amber-800">
+                  Test suite changed since this script was generated ({specDiffSinceScript.length} change{specDiffSinceScript.length === 1 ? '' : 's'})
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {specDiffSinceScript.map((d, i) => (
+                    <li key={i} className="text-xs text-amber-700">• {d}</li>
+                  ))}
+                </ul>
+                {syncError && <p className="text-xs text-red-600 mt-1.5">{syncError}</p>}
+              </div>
+              <button
+                type="button"
+                onClick={handleSyncScript}
+                disabled={syncingScript}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded text-xs font-semibold transition-colors flex-shrink-0"
+              >
+                {syncingScript ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                {syncingScript ? 'Applying…' : 'Sync Script with Suite Changes'}
+              </button>
+            </div>
+          )}
 
           {/* Editable code area */}
           <textarea

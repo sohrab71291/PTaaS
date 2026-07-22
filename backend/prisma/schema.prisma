@@ -45,6 +45,12 @@ model TestSpec {
   testType        String?
   complexity      String?
   envVars         Json      @default("[]")
+  // Source files (test-case CSV/XLSX/YAML/TXT, or HAR/JSON captures) that
+  // generatedScript was produced from — persisted so editing the suite later
+  // doesn't lose them (they're needed to fully regenerate the script; small
+  // edits instead go through the incremental /api/ai-refine sync path).
+  // Shape: [{ name, content /* base64 */, mimeType, source: 'ai' | 'har' }]
+  uploadedFiles   Json      @default("[]")
   lastRunStatus   String?
   lastRunAt     DateTime?
   scheduledAt   DateTime?
