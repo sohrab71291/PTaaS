@@ -461,7 +461,8 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
           );
           if (fixResult.ok) {
             sendLog(`[PerfOps] ✓ Auto-fix applied — re-running script (attempt ${fixResult.nextAttempt}/${autoFixRun.maxAttempts})…`);
-            sendToExecution(executionId, { type: 'retry', timestamp: Date.now(), data: { attempt: fixResult.nextAttempt, maxAttempts: autoFixRun.maxAttempts } });
+            const fixedScript = getAutoFixRun(executionId)?.script;
+            sendToExecution(executionId, { type: 'retry', timestamp: Date.now(), data: { attempt: fixResult.nextAttempt, maxAttempts: autoFixRun.maxAttempts, fixedScript } });
             agentRegistry.setStatus(agentId, 'online');
             await prisma.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => {});
             break;
@@ -574,7 +575,8 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
           );
           if (fixResult.ok) {
             sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[PerfOps] ✓ Auto-fix applied — re-running script (attempt ${fixResult.nextAttempt}/${autoFixRun.maxAttempts})…` } });
-            sendToExecution(executionId, { type: 'retry', timestamp: Date.now(), data: { attempt: fixResult.nextAttempt, maxAttempts: autoFixRun.maxAttempts } });
+            const fixedScript = getAutoFixRun(executionId)?.script;
+            sendToExecution(executionId, { type: 'retry', timestamp: Date.now(), data: { attempt: fixResult.nextAttempt, maxAttempts: autoFixRun.maxAttempts, fixedScript } });
             agentRegistry.setStatus(agentId, 'online');
             await prisma.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => {});
             break;

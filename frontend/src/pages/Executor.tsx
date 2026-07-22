@@ -88,7 +88,7 @@ export const Executor: React.FC = () => {
   const {
     status, executionId, liveMetrics, systemMetrics, consoleLines, summary,
     k6NotFound, sloResults, startExecution, stopExecution,
-    autoFixAttempt, autoFixMaxAttempts,
+    autoFixAttempt, autoFixMaxAttempts, autoFixedScript,
   } = useExecution();
 
   const consoleBoxRef = useRef<HTMLDivElement>(null);
@@ -172,7 +172,7 @@ export const Executor: React.FC = () => {
       const token = localStorage.getItem('auth_token');
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
       const authHeaders = { ...headers, 'Content-Type': 'application/json' };
-      fetch(`/api/testSpecs/${specId}`, { headers })
+      fetch(`/api/test-specs/${specId}`, { headers })
         .then(r => r.json())
         .then(currentSpec => {
           const updatedLoadProfile = {
@@ -183,7 +183,7 @@ export const Executor: React.FC = () => {
               : { stages: [{ target: constantVus, duration: constantDuration }] }),
             lastExecutorScriptSource: scriptSource,
           };
-          return fetch(`/api/testSpecs/${specId}`, {
+          return fetch(`/api/test-specs/${specId}`, {
             method: 'PUT',
             headers: authHeaders,
             body: JSON.stringify({ ...currentSpec, loadProfile: updatedLoadProfile }),
@@ -192,6 +192,33 @@ export const Executor: React.FC = () => {
         .catch(() => {});
     }
   }, [status, executionId]);
+
+  // When the backend's auto-fix diagnoses and rewrites a failing script mid-run,
+  // reflect that rewritten script everywhere the original one lived — the local
+  // editor state (whichever source produced it), sessionStorage (so a refresh of
+  // this page doesn't lose it), and the test suite's saved spec (so future runs
+  // from Test Authoring pick up the fix instead of the stale, broken script).
+  useEffect(() => {
+    if (!autoFixedScript) return;
+    if (scriptSource === 'authoring') setAuthoringScript(autoFixedScript);
+    else if (scriptSource === 'upload') setUploadedScript(autoFixedScript);
+    else setPastedScript(autoFixedScript);
+    sessionStorage.setItem('generatedK6Script', autoFixedScript);
+
+    if (specId) {
+      const token = localStorage.getItem('auth_token');
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      fetch(`/api/test-specs/${specId}`, { headers })
+        .then(r => r.json())
+        .then(currentSpec => fetch(`/api/test-specs/${specId}`, {
+          method: 'PUT',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...currentSpec, generatedScript: autoFixedScript }),
+        }))
+        .catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFixedScript]);
 
   const onDrop = useCallback((files: File[]) => {
     const f = files[0];
