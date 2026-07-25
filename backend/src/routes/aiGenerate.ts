@@ -9,6 +9,7 @@ import {
 } from '../services/anthropicClient';
 import {
   buildInfluxBlock, buildGenericAuthPatternBlock, buildCsvCredentialAuthPatternBlock, HANDLE_SUMMARY_BLOCK,
+  buildModuleRecordAccessPatternBlock,
   DATA_PLACEHOLDER, injectCapturedData, extractCapturedData, injectCredentials,
   extractCredentials, injectCredentialsBlock,
 } from '../services/k6PromptBlocks';
@@ -154,6 +155,7 @@ function buildSystemPrompt(
   baseUrl: string | null,
   specContext: SpecContext | null,
   useCsvCredentials: boolean,
+  hasModuleRecordAccessCall: boolean,
 ): string {
   return `You are an expert performance engineer specializing in k6 load testing with InfluxDB v2 integration. Analyze the provided test case data and generate a complete, production-ready k6 JavaScript script.
 
@@ -181,9 +183,11 @@ MANDATORY RULES — every rule must be followed exactly:
 17. ${useCsvCredentials
     ? 'Login credentials come from an uploaded CSV pool (one login per VU) — see the CSV-BASED PER-VU CREDENTIALS pattern below. This is MANDATORY: do not write a shared setup() login for this script; every VU must authenticate independently via ensureAuth(), and the getVuCredential()/ensureAuth() helper functions from that pattern must be reproduced verbatim, including the REQUIRED InstanceName field in the login payload — do not simplify, rename, or omit it.'
     : 'If the test cases require authentication (a login/token endpoint), perform the login ONCE in setup() — never per-VU or per-iteration — and pass the resulting session token to exec functions via setup()\'s return value. See AUTHENTICATION PATTERN below; this is mandatory whenever a login step exists, to avoid concurrent-login failures under load.'}
+${hasModuleRecordAccessCall ? `18. GetModuleRecordAccess CSRF PROPAGATION IS MANDATORY — the .../api/internal/Permission/GetModuleRecordAccess call's response carries a 'csrf-token' response header. Capture that exact header value into a variable right after that call, and send it as the 'x-csrf-token' request header on every authenticated call made AFTER it (not on GetModuleRecordAccess itself, and not a hardcoded/captured literal). See the GetModuleRecordAccess HEADER PATTERN block below for the required header shape on the call itself and the exact capture/propagation code.` : ''}
 
 ${buildInfluxBlock(baseUrl)}
 ${useCsvCredentials ? buildCsvCredentialAuthPatternBlock() : buildGenericAuthPatternBlock()}
+${hasModuleRecordAccessCall ? buildModuleRecordAccessPatternBlock() : ''}
 ${HANDLE_SUMMARY_BLOCK}
 ════════════════════════════════════════════════════════════════
 
@@ -258,6 +262,8 @@ router.post('/ai-generate', upload.single('file'), async (req: Request, res: Res
   }
 
   const detectedBaseUrl = detectBaseUrl(fileContent) ?? detectBaseUrl(specContext?.request?.url ?? '');
+  const hasModuleRecordAccessCall = /GetModuleRecordAccess/i.test(fileContent)
+    || /GetModuleRecordAccess/i.test(specContext?.request?.url ?? '');
   const userMessage = `Here are the test cases to analyze and convert into a k6 performance test script:\n\n\`\`\`\n${fileContent}\n\`\`\`\n\nGenerate a ${testType} k6 script at ${complexity} complexity level based on these test cases. Output ONLY the JavaScript code.`;
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -279,7 +285,7 @@ router.post('/ai-generate', upload.single('file'), async (req: Request, res: Res
         stream = await getAnthropicClient().messages.stream({
           model: CLAUDE_MODEL,
           max_tokens: 16000,
-          system: buildSystemPrompt(testType || 'Load Test', complexity || 'Standard', loadProfile, envVarKeys, detectedBaseUrl, specContext, useCsvCredentials),
+          system: buildSystemPrompt(testType || 'Load Test', complexity || 'Standard', loadProfile, envVarKeys, detectedBaseUrl, specContext, useCsvCredentials, hasModuleRecordAccessCall),
           messages: [{ role: 'user', content: userMessage }],
         });
         break;

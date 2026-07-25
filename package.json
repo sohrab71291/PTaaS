@@ -2,10 +2,14 @@
   "name": "ptaas",
   "version": "1.0.0",
   "private": true,
-  "workspaces": ["frontend", "backend", "agent"],
+  "workspaces": [
+    "frontend",
+    "backend",
+    "agent"
+  ],
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-    "dev:frontend": "cd frontend && npm run dev",
+    "dev:frontend": "wait-on -t 60000 http://localhost:3001/api/health && cd frontend && npm run dev",
     "dev:backend": "cd backend && npm run dev",
     "agent:start": "cd agent && npm start",
     "install:all": "npm install",
@@ -13,6 +17,7 @@
     "setup:diagnose": "powershell -ExecutionPolicy Bypass -File setup.ps1 -Diagnose"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "wait-on": "^9.1.0"
   }
 }

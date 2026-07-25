@@ -20,6 +20,11 @@ export interface ParsedTestCase {
   // Names (not values) of cookies seen on the original captured request — a hint
   // for reconstructing the session cookie name after a fresh login. See harParser.ts.
   cookieNames?: string[];
+  // The literal __ArcherSessionCookie__ value captured on this request's Cookie
+  // header, if present. See harParser.ts — this is the ONLY cookie value that
+  // survives out of the captured request, per the strict header allowlist for
+  // non-login replay calls (Cookie / x-csrf-token / Content-Type only).
+  archerSessionToken?: string;
   // 'form' means `payload` is a JSON-encoded object of real field name/value
   // pairs that must be sent as application/x-www-form-urlencoded, NOT
   // JSON.stringify'd — see harParser.ts. Undefined/'json' = send as JSON body.
@@ -74,6 +79,7 @@ export const AUTH_URL_PATTERNS = /\/login\b|\/signin\b|\/auth\b|\/security\/logi
 // so they are stripped from the static header block and supplied dynamically
 // from the data object returned by setup().
 export const AUTH_HEADER_NAMES = new Set([
+  'cookie',
   'x-csrf-token',
   'authorization',
   'x-auth-token',
@@ -87,6 +93,21 @@ export function isAuthEntry(tc: ParsedTestCase): boolean {
   return tc.method.toUpperCase() === 'POST' && AUTH_URL_PATTERNS.test(tc.url);
 }
 
+// ASP.NET WebForms login (e.g. Home.aspx postback with __VIEWSTATE/__EVENTTARGET
+// fields): the login page must be GET'd fresh on every run to scrape a
+// per-request __VIEWSTATE/__VIEWSTATEGENERATOR/loginCsrfToken — replaying the
+// captured literals fails because ASP.NET rejects a stale/mismatched
+// __VIEWSTATE. Detected independent of URL pattern, purely by payload shape.
+export function isWebFormsAuthEntry(tc: ParsedTestCase): boolean {
+  if (tc.method.toUpperCase() !== 'POST' || tc.payloadType !== 'form' || !tc.payload) return false;
+  try {
+    const fields = JSON.parse(tc.payload);
+    return typeof fields === 'object' && fields !== null && '__VIEWSTATE' in fields && '__EVENTTARGET' in fields;
+  } catch {
+    return false;
+  }
+}
+
 export function isAuthHeader(name: string): boolean {
   return AUTH_HEADER_NAMES.has(name.toLowerCase());
 }
@@ -95,6 +116,7 @@ export function isAuthHeader(name: string): boolean {
 // taken from the setup() return object.
 function authHeaderDataExpr(name: string): string {
   const lower = name.toLowerCase();
+  if (lower === 'cookie') return 'data.cookieHeader';
   if (lower === 'x-csrf-token') return 'data.csrfToken';
   if (lower === 'authorization') return "data.sessionToken ? ('Bearer ' + data.sessionToken) : ''";
   return 'data.sessionToken';
@@ -104,18 +126,10 @@ function authHeaderDataExpr(name: string): string {
 
 function generateSetupWithAuth(
   authCase: ParsedTestCase,
+  defaultAspxUrl: string,
   maxVus: number,
 ): string {
   const urlPath = toUrlPath(authCase.url);
-
-  // Strip auth headers from the login call itself — we don't have a token yet.
-  const loginHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-  for (const [k, v] of Object.entries(authCase.headers)) {
-    if (!isAuthHeader(k)) loginHeaders[k] = v;
-  }
-  const loginHeadersJson = JSON.stringify(loginHeaders, null, 4)
-    .replace(/^/gm, '    ')
-    .trim();
 
   const payloadExpr = authCase.payload
     ? `JSON.stringify(${authCase.payload})`
@@ -131,14 +145,10 @@ export function setup() {
     'k6_vus_max,testid=' + escapeTagValue(TEST_ID) + ' value=${maxVus}i ' + __ts,
   ]);
 
-  // ── Pre-test authentication ───────────────────────────────────────────────
-  // Called once before any VU starts. The returned sessionToken / csrfToken are
-  // passed as the data argument to every exec function so that all requests
-  // use fresh, non-expired credentials rather than the static tokens captured
-  // in the HAR file.
+  // ── S1: POST security/login — session token. Sent with NO headers at all,
+  // exactly as captured — the server does not require any on this call. ─────
   const __authRes = http.post(BASE_URL + '${urlPath}', ${payloadExpr}, {
-    headers: ${loginHeadersJson},
-    tags: { name: 'auth-setup', step: 'auth-precheck' },
+    tags: { name: 'S1_SecurityLogin' },
   });
 
   if (__authRes.status >= 400) {
@@ -146,7 +156,6 @@ export function setup() {
   }
 
   let __sessionToken = '';
-  let __csrfToken = '';
   try {
     const __body = __authRes.json();
     // Try common token response shapes in order of specificity
@@ -159,22 +168,136 @@ export function setup() {
       (__body.data && __body.data.access_token) ||
       ''
     );
-    // CSRF token: check response header first, then fall back to session token
-    // (many APIs reuse the session token as the CSRF value)
-    __csrfToken = __authRes.headers['X-Csrf-Token'] ||
-                  __authRes.headers['x-csrf-token'] ||
-                  __sessionToken;
   } catch (__e) {
     console.error('[Auth] Failed to parse login response: ' + __e);
   }
 
-  if (!__sessionToken && !__csrfToken) {
-    console.warn('[Auth] No token extracted from login response — requests may return 401.');
-  } else {
+  // Build the Cookie header from the login response's real Set-Cookie values
+  // when present (k6 exposes these on res.cookies regardless of the VU cookie
+  // jar); fall back to the extracted session token itself.
+  const __cookieParts = [];
+  if (__authRes.cookies) {
+    for (const __cookieName of Object.keys(__authRes.cookies)) {
+      const __c = __authRes.cookies[__cookieName][0];
+      if (__c) __cookieParts.push(__cookieName + '=' + __c.value);
+    }
+  }
+  const __cookieHeader = __cookieParts.length ? __cookieParts.join('; ') : __sessionToken;
+
+  // ── S2: GET /Default.aspx — csrf token. Also sent with NO headers. ─────────
+  const __defaultRes = http.get(BASE_URL + '${defaultAspxUrl}', {
+    tags: { name: 'S2_GetDefaultAspx' },
+  });
+  const __csrfToken = (__defaultRes.body.match(/id="loginCsrfToken" value="([^"]*)"/) || [])[1] || '';
+
+  if (!__cookieHeader) {
+    console.warn('[Auth] No session token extracted from security/login — requests may return 401.');
+  }
+  if (!__csrfToken) {
+    console.warn('[Auth] No csrf token extracted from /Default.aspx — requests may return 403.');
+  }
+  if (__cookieHeader && __csrfToken) {
     console.log('[Auth] Tokens acquired successfully.');
   }
 
-  return { sessionToken: __sessionToken, csrfToken: __csrfToken };
+  return { sessionToken: __sessionToken, cookieHeader: __cookieHeader, csrfToken: __csrfToken };
+}
+`;
+}
+
+// Generates a two-step setup() for the ASP.NET WebForms login:
+//   S1  GET  Default.aspx        — scrape loginCsrfToken, __VIEWSTATE, __VIEWSTATEGENERATOR
+//   S2  POST Home.aspx (form)    — postback with the scraped tokens + credentials; response
+//                                   carries the session cookie / auth status
+// __VIEWSTATE/__VIEWSTATEGENERATOR/loginCsrfToken are single-use/session-bound —
+// replaying the literals captured in the HAR is rejected by the server, so
+// they MUST be re-scraped fresh from S1 on every run.
+function generateWebFormsAuthSetup(
+  authCase: ParsedTestCase,
+  maxVus: number,
+): string {
+  const fields: Record<string, string> = JSON.parse(authCase.payload as string);
+
+  const username = fields.txtUserName ?? fields.username ?? '';
+  const password = fields.txtpassword ?? fields.password ?? '';
+
+  return `
+export function setup() {
+  if (INFLUX_V2_ENABLED) { ensureInfluxBucket(); }
+  k6VusMax.add(${maxVus}, { testid: TEST_ID });
+  const __ts = String(Date.now()) + '000000';
+  writeInfluxLines([
+    'testStartEnd,' + buildInfluxTagSet({ runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, type: 'started' }) + ' value=1i ' + __ts,
+    'k6_vus_max,testid=' + escapeTagValue(TEST_ID) + ' value=${maxVus}i ' + __ts,
+  ]);
+
+  // ── S1: GET Default.aspx — scrape loginCsrfToken, __VIEWSTATE, __VIEWSTATEGENERATOR ──
+  const __loginPageRes = http.get(BASE_URL + '/Default.aspx', { tags: { name: 'S1_GetDefaultAspx' } });
+  const loginCsrfToken      = (__loginPageRes.body.match(/id="loginCsrfToken" value="([^"]*)"/) || [])[1] || '';
+  const viewState           = (__loginPageRes.body.match(/id="__VIEWSTATE" value="([^"]*)"/) || [])[1] || '';
+  const viewStateGenerator  = (__loginPageRes.body.match(/id="__VIEWSTATEGENERATOR" value="([^"]*)"/) || [])[1] || '';
+  if (!viewState || !loginCsrfToken) {
+    console.warn('[Auth] Could not scrape __VIEWSTATE/loginCsrfToken from Default.aspx — login will likely fail.');
+  }
+
+  const user = {
+    username: __ENV.APP_USERNAME || ${JSON.stringify(username)},
+    password: __ENV.APP_PASSWORD || ${JSON.stringify(password)},
+  };
+
+  // ── S2: POST Home.aspx (form data) — session cookie / auth status ──────────
+  const loginPayload = {
+    scriptManager_TSM:          '',
+    __EVENTTARGET:              'btnLogin',
+    __EVENTARGUMENT:            '',
+    __VIEWSTATE:                viewState,
+    __VIEWSTATEGENERATOR:       viewStateGenerator,
+    loginCsrfToken:             loginCsrfToken,
+    showDomainRow:              'False',
+    txtUserName:                user.username,
+    txtUserName_ClientState:    JSON.stringify({
+      enabled: true,
+      emptyMessage: '',
+      validationText: user.username,
+      valueAsString: user.username,
+      lastSetTextBoxValue: user.username,
+    }),
+    txtpassword:                user.password,
+    txtpassword_ClientState:    JSON.stringify({
+      enabled: true,
+      emptyMessage: '',
+      validationText: user.password,
+      valueAsString: user.password,
+      lastSetTextBoxValue: user.password,
+    }),
+  };
+
+  const loginRes = http.post(BASE_URL + '/Home.aspx', loginPayload, {
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    tags: { name: 'S2_T01_Login' },
+  });
+
+  if (loginRes.status >= 400) {
+    console.error('[Auth] Login failed — status: ' + loginRes.status);
+  } else {
+    console.log('[Auth] Login postback completed — status: ' + loginRes.status);
+  }
+
+  // Build the Cookie header from the login response's real Set-Cookie values
+  // (this is the session cookie / auth status S2 is captured for above).
+  const __cookieParts = [];
+  if (loginRes.cookies) {
+    for (const __cookieName of Object.keys(loginRes.cookies)) {
+      const __c = loginRes.cookies[__cookieName][0];
+      if (__c) __cookieParts.push(__cookieName + '=' + __c.value);
+    }
+  }
+  const cookieHeader = __cookieParts.join('; ');
+  if (!cookieHeader) {
+    console.warn('[Auth] No session cookie returned from Home.aspx — requests may be unauthenticated.');
+  }
+
+  return { sessionToken: '', cookieHeader: cookieHeader, csrfToken: loginCsrfToken };
 }
 `;
 }
@@ -196,9 +319,19 @@ export function generateK6FromTestCases(testCases: ParsedTestCase[], loadProfile
   // Separate auth/login entries from load-test entries.
   // Auth entries are called once in setup() to capture fresh tokens;
   // they are NOT included as load-test scenarios.
-  const authCase = testCases.find(isAuthEntry) ?? null;
-  const mainCases = testCases.filter(tc => !isAuthEntry(tc));
+  const webFormsAuthCase = testCases.find(isWebFormsAuthEntry) ?? null;
+  const authCase = webFormsAuthCase ?? testCases.find(isAuthEntry) ?? null;
   const hasAuth = authCase !== null;
+
+  // Both auth flows GET .../Default.aspx themselves inside setup() (WebForms
+  // for S1's token scrape, the generic flow for its csrf token) — a captured
+  // GET to that same page must be excluded from the load-test scenarios so
+  // it isn't redundantly replayed as a scenario too.
+  const defaultAspxCase = hasAuth
+    ? testCases.find(tc => tc !== authCase && tc.method.toUpperCase() === 'GET' && /Default\.aspx/i.test(tc.url)) ?? null
+    : null;
+
+  const mainCases = testCases.filter(tc => tc !== authCase && tc !== defaultAspxCase);
 
   // Build unique safe names for the main (non-auth) test cases.
   const usedNames = new Map<string, number>();
@@ -342,9 +475,11 @@ ${httpCall}
 
   const maxVus = Math.max(...stages.map((s: any) => s.target ?? 0), 1);
 
-  const setupBlock = hasAuth
-    ? generateSetupWithAuth(authCase!, maxVus)
-    : influxSetup(maxVus);
+  const setupBlock = webFormsAuthCase
+    ? generateWebFormsAuthSetup(webFormsAuthCase, maxVus)
+    : hasAuth
+      ? generateSetupWithAuth(authCase!, defaultAspxCase ? toUrlPath(defaultAspxCase.url) : '/Default.aspx', maxVus)
+      : influxSetup(maxVus);
 
   return `${influxImports()}
 

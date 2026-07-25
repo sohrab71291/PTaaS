@@ -345,6 +345,22 @@ function getVuCredential() {
   return CREDENTIALS[(__VU - 1) % CREDENTIALS.length];
 }
 
+// Every VU needs its own cookie jar (module scope is per-VU in k6, so this
+// cache is automatically isolated — no keying by __VU needed), and the login
+// call plus every subsequent authenticated request MUST pass this SAME jar
+// (\`{ jar: getVuJar() }\` in the request params) — not just rely on the
+// manually-built Cookie header below. The login response's own Set-Cookie
+// values (e.g. an archer_ngrx_* session-state cookie) only get captured and
+// automatically replayed on later requests if they flow through a jar; if the
+// jar is skipped, the server keeps whatever it last set for that VU (possibly
+// a "logged-out" value from a prior 401) and every subsequent call 401s
+// regardless of how valid the fresh session token is.
+let __vuJar = null;
+function getVuJar() {
+  if (!__vuJar) __vuJar = http.cookieJar();
+  return __vuJar;
+}
+
 // The classic Archer session cookie (SessionToken -> __ArcherSessionCookie__)
 // does NOT necessarily authenticate the newer ngrx/Angular API surface
 // (/ngrx/*) — that surface commonly expects a separate bearer JWT. Extract
@@ -378,7 +394,7 @@ function ensureAuth() {
   const res = http.post(
     cred.loginUrl,
     JSON.stringify(loginPayload),
-    { headers: { 'Content-Type': 'application/json' }, tags: { name: 'Login' } },
+    { headers: { 'Content-Type': 'application/json' }, tags: { name: 'Login' }, jar: getVuJar() },
   );
   let body = {};
   try { body = res.json(); } catch (e) { body = {}; }
@@ -397,11 +413,24 @@ function ensureAuth() {
 }
 
 // Call this after a request comes back 401 — the cached session (30-min token
-// in Archer's case) may have expired mid-run. Clears the cache and forces a
-// fresh login on the next ensureAuth() call.
+// in Archer's case) may have expired mid-run. Clears the cache AND the VU's
+// cookie jar before forcing a fresh login: the server responds to an
+// unauthenticated/expired-session call by setting its OWN session-state
+// cookie (e.g. archer_ngrx_*) to a "logged-out" value via Set-Cookie, and
+// since every request runs through getVuJar()'s shared jar, that stale
+// logged-out cookie would otherwise keep riding along next to the brand-new
+// __ArcherSessionCookie__ on every subsequent request — the server sees the
+// mismatch and immediately 401s again, forever. Wiping the jar for BASE_URL
+// first guarantees the only cookie the next request carries is the fresh one
+// this reauth() call is about to obtain.
 function reauth() {
   __vuAuth = null;
   console.warn('VU ' + __VU + ': got 401 — re-authenticating.');
+  const jar = getVuJar();
+  const stale = jar.cookiesForURL(BASE_URL) || {};
+  Object.keys(stale).forEach(function (name) {
+    jar.set(BASE_URL, name, '', { expires: new Date(0).toUTCString() });
+  });
   return ensureAuth();
 }
 
@@ -419,12 +448,16 @@ export function <execFnName>() {
 }
 
 Every authenticated request MUST wrap headers in a params object, spreading
-authHeaders alongside any per-request headers (e.g. Content-Type) — do not pass
-authHeaders directly as the headers value:
+authHeaders alongside any per-request headers (e.g. Content-Type), and MUST pass
+\`jar: getVuJar()\` so the server's own session-state cookies flow through and
+get replayed automatically (see getVuJar()'s comment above — skipping this is
+what causes repeated 401s after the first reauth). Do NOT set Origin, Referer,
+or User-Agent on any request — these headers must never be sent:
 
 const params = {
   headers: { ...authHeaders, 'Content-Type': 'application/json' },
   tags: { name: '<RequestName>' },
+  jar: getVuJar(),
 };
 const res = http.post(url, payload, params);
 
@@ -433,6 +466,60 @@ each VU authenticates independently the first time ensureAuth() runs for it.
 setup() should still perform the InfluxDB bootstrap (ensureInfluxBucket(),
 k6VusMax, testStartEnd 'started') exactly as shown in the InfluxDB block above,
 just without any login logic.
+`;
+}
+
+// Archer's GetModuleRecordAccess endpoint needs a header shape that diverges
+// from every other authenticated call in the script (see the incident this
+// codifies: a Postman replay of this exact call redirected to Default.aspx
+// because the request carried the wrong/extra headers and a stale cookie).
+// This block is appended whenever the test cases target that endpoint so
+// Claude reproduces the two-header call and the resulting csrf-token capture
+// exactly, instead of reusing the generic AUTHENTICATION PATTERN's headers.
+export function buildModuleRecordAccessPatternBlock(): string {
+  return `════════════════════════════════════════════════════════════════
+GetModuleRecordAccess HEADER PATTERN — MANDATORY whenever a test case calls
+.../api/internal/Permission/GetModuleRecordAccess. This endpoint's header
+requirements are stricter than the generic AUTHENTICATION PATTERN above and
+override it for this endpoint specifically.
+════════════════════════════════════════════════════════════════
+
+Every call to GetModuleRecordAccess MUST send EXACTLY these three headers —
+no Accept, no other header from the generic pattern:
+
+  Cookie:                 '__ArcherSessionCookie__=' + data.sessionToken
+  x-http-method-override: 'GET'
+  Content-Type:           'application/json'
+
+data.sessionToken is the session token returned by the /api/security/login
+call performed in setup() (see AUTHENTICATION PATTERN above) — do NOT scrape
+or hardcode a session cookie value from the captured test case data; it will
+be stale by the time the script runs.
+
+const params = {
+  headers: {
+    Cookie: '__ArcherSessionCookie__=' + data.sessionToken,
+    'x-http-method-override': 'GET',
+    'Content-Type': 'application/json',
+  },
+  tags: { name: 'GetModuleRecordAccess' },
+};
+const res = http.post(url, payload, params);
+
+The response to THIS call carries the csrf token needed by every subsequent
+authenticated request, in its 'csrf-token' response header — capture it into
+a variable and thread it through as x-csrf-token on every later call. Do NOT
+use a value hardcoded/captured from the test case data — it must be read from
+THIS call's own response, every time the script runs:
+
+const csrfToken = res.headers['csrf-token'] || res.headers['Csrf-Token'] || '';
+
+// Every authenticated request AFTER this one — but not this call itself —
+// MUST include x-csrf-token: csrfToken alongside its other headers:
+const laterParams = {
+  headers: { ...authHeaders, 'x-csrf-token': csrfToken, 'Content-Type': 'application/json' },
+  tags: { name: '<RequestName>' },
+};
 `;
 }
 

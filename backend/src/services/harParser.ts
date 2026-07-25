@@ -262,6 +262,7 @@ export function parseHar(content: string, filename = 'file', opts: ParseHarOptio
     // ── Headers ─────────────────────────────────────────────────────────────
     const headers: Record<string, string> = {};
     let cookieNames: string[] = [];
+    let archerSessionToken: string | undefined;
     for (const h of req.headers ?? []) {
       if (!h.name) continue;
       if (h.name.toLowerCase() === 'cookie') {
@@ -269,6 +270,12 @@ export function parseHar(content: string, filename = 'file', opts: ParseHarOptio
         // generated script runs, but the names hint at what the app's session
         // cookie is called (see extractCookieNames above).
         cookieNames = extractCookieNames(h.value);
+        // The one cookie value that IS carried forward verbatim: the Archer
+        // session token, e.g. __ArcherSessionCookie__=E90D056AEB8BD2449A0228CC2AAA8DD2.
+        // Per the strict non-login header allowlist (see harGenerate.ts
+        // toReplayRequest), this is the only cookie value ever reused as-is.
+        const m = h.value.match(/__ArcherSessionCookie__=([^;]+)/);
+        if (m) archerSessionToken = m[1].trim();
         continue;
       }
       if (SKIP_HEADERS.has(h.name.toLowerCase())) continue;
@@ -328,6 +335,7 @@ export function parseHar(content: string, filename = 'file', opts: ParseHarOptio
       weight: 1,
       tags: [],
       ...(cookieNames.length ? { cookieNames } : {}),
+      ...(archerSessionToken ? { archerSessionToken } : {}),
       ...(payloadType ? { payloadType } : {}),
     });
 

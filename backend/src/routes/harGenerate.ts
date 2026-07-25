@@ -77,12 +77,45 @@ function stripAuthHeaders(headers: Record<string, string>): Record<string, strin
   return out;
 }
 
+// GetModuleRecordAccess is the call that PRODUCES the csrf token (see its
+// response's csrf-token header) — it must never carry a stale/"null"
+// x-csrf-token captured from the HAR, and it needs x-http-method-override
+// instead, per explicit product requirement:
+//   Cookie:                 __ArcherSessionCookie__=<token>
+//   x-http-method-override: GET
+//   Content-Type:           application/json
+const MODULE_RECORD_ACCESS_RE = /GetModuleRecordAccess/i;
+
+// STRICT HEADER ALLOWLIST for every non-login replay call — per explicit
+// product requirement, the generated script must carry ONLY these 3 headers
+// on non-login requests, taken from the HAR exactly as specified:
+//   - Cookie: ONLY the __ArcherSessionCookie__=<token> value (never any other
+//     cookie captured on the request)
+//   - x-csrf-token: verbatim from the HAR's own Header section
+//   - Content-Type: application/json (fixed, not the HAR's captured mimeType)
+// Every other header key present in the HAR is ignored outright.
+function buildReplayHeaders(tc: ParsedTestCase): Record<string, string> {
+  const cookie = tc.archerSessionToken ? `__ArcherSessionCookie__=${tc.archerSessionToken}` : undefined;
+
+  if (MODULE_RECORD_ACCESS_RE.test(tc.url)) {
+    const headers: Record<string, string> = { 'x-http-method-override': 'GET', 'Content-Type': 'application/json' };
+    if (cookie) headers.Cookie = cookie;
+    return headers;
+  }
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (cookie) headers.Cookie = cookie;
+  const csrfEntry = Object.entries(tc.headers).find(([k]) => k.toLowerCase() === 'x-csrf-token');
+  if (csrfEntry) headers['x-csrf-token'] = csrfEntry[1];
+  return headers;
+}
+
 function toReplayRequest(tc: ParsedTestCase): ReplayRequest {
   return {
     name: tc.name,
     method: tc.method,
     path: toUrlPath(tc.url),
-    headers: stripAuthHeaders(tc.headers),
+    headers: buildReplayHeaders(tc),
     payload: tc.payload,
     payloadType: tc.payloadType ?? 'json',
     expectedStatus: tc.expectedStatus,
@@ -173,6 +206,7 @@ ${useCsvCredentials
 14. Every VU must use its own cookie jar, never one shared object handed down from setup() — reproduce getVuJar() from the REPLAY HARNESS PATTERN below verbatim and call it in sessionReplay(); do NOT read a jar off setupData.
 15. RE-AUTH ON 401/403 is MANDATORY — reproduce replayStep exactly as shown in the REPLAY HARNESS PATTERN below: on a 401 OR 403 response, call reauth() once, rebuild the request's auth headers from the result, and retry the SAME request exactly once before falling through to normal check()/metrics/error-logging on whichever response (original or retried) is now current. Never retry more than once per step — a second consecutive 401/403 is a real failure, not a transient token expiry.
 16. Per-request response-time checks must use effectiveResponseThreshold(reqDef) (see REPLAY HARNESS PATTERN), NEVER the raw reqDef.responseThresholdMs directly — a single captured HAR sample under no concurrent load is not a reliable per-request SLA under real replay load, and using it verbatim produces noisy false-positive check failures unrelated to actual regressions.
+17. CSRF PROPAGATION IS MANDATORY whenever any captured call targets .../api/internal/Permission/GetModuleRecordAccess — reproduce the module-level \`__csrfToken\` variable and \`captureCsrfToken(reqDef, response)\` from the REPLAY HARNESS PATTERN below verbatim, call it in replayStep right after the response comes back (both the initial and any 401-retry response), and override the request's x-csrf-token header with \`__csrfToken\` whenever it is non-empty — this MUST take priority over any x-csrf-token value baked into reqDef.headers from the HAR capture, which is a stale snapshot from capture time. Do not scope __csrfToken per-iteration (unlike correlationVars) — like the session cookie, it stays valid across iterations once obtained.
 
 ${buildInfluxBlock(baseUrl)}
 ${useCsvCredentials ? buildCsvCredentialAuthPatternBlock() : ''}
@@ -212,13 +246,17 @@ function sanitizeHeaders(headers) {
   // the ORIGINAL request. Replaying them verbatim can desync from the actual
   // body k6 sends and cause the server to hang or reject the request outright.
   // k6 computes these itself — strip them, along with any empty/null values.
+  // user-agent/origin/referer are stripped outright too — per requirement,
+  // requests must never carry these, and k6 supplies its own default
+  // User-Agent when none is set rather than the request being sent bare.
   const sanitized = {};
   if (!headers) return sanitized;
   Object.keys(headers).forEach(function (name) {
     const value = headers[name];
     if (value === undefined || value === null || String(value).trim() === '') return;
     const normalizedName = String(name).toLowerCase();
-    if (normalizedName === 'content-length' || normalizedName === 'transfer-encoding') return;
+    if (normalizedName === 'content-length' || normalizedName === 'transfer-encoding'
+      || normalizedName === 'user-agent' || normalizedName === 'origin' || normalizedName === 'referer') return;
     sanitized[name] = value;
   });
   return sanitized;
@@ -271,6 +309,23 @@ function captureCorrelationVars(reqDef, response, correlationVars) {
       console.log('VU ' + __VU + ': captured runtime id ' + value + ' from ' + reqDef.name + ' (' + v.jsonPath + ') -> ' + v.token);
     }
   });
+}
+
+// GetModuleRecordAccess is the call that PRODUCES the csrf token used by every
+// later authenticated request — its response carries the fresh token in a
+// 'csrf-token' response header. Module-scoped (not correlationVars-scoped)
+// because it behaves like the session cookie: once obtained it stays valid
+// for the rest of this VU's session, not just the current iteration. NEVER
+// falls back to a captured/HAR literal — a stale csrf token gets rejected by
+// the server just like an expired session would.
+let __csrfToken = '';
+function captureCsrfToken(reqDef, response) {
+  if (!/GetModuleRecordAccess/i.test(String(reqDef.path || ''))) return;
+  const token = response.headers['csrf-token'] || response.headers['Csrf-Token'] || response.headers['CSRF-Token'];
+  if (token) {
+    __csrfToken = token;
+    console.log('VU ' + __VU + ': captured fresh csrf-token from ' + reqDef.name);
+  }
 }
 
 // Some endpoints are known to legitimately 404 depending on environment/record
@@ -474,11 +529,23 @@ function reauth() {
     __vuAuth = { cookieHeader: '', jwt: '' };
     return __vuAuth;
   }
+  // The server responds to an unauthenticated/expired-session call by setting
+  // its OWN session-state cookie (e.g. archer_ngrx_*) to a "logged-out" value
+  // via Set-Cookie — and since every request runs through the same VU jar
+  // (getVuJar()), that stale logged-out cookie would otherwise keep riding
+  // along next to the brand-new session cookie on every subsequent request,
+  // causing an immediate re-401 regardless of how valid the fresh session is.
+  // Wipe the jar for BASE_URL before re-login so only the fresh cookie survives.
+  const jar = getVuJar();
+  const stale = jar.cookiesForURL(BASE_URL) || {};
+  Object.keys(stale).forEach(function (name) {
+    jar.set(BASE_URL, name, '', { expires: new Date(0).toUTCString() });
+  });
   const res = http.request(
     effectiveLoginRequest.method,
     BASE_URL + effectiveLoginRequest.path,
     requestBody(effectiveLoginRequest.payload, effectiveLoginRequest.payloadType),
-    { headers: sanitizeHeaders(effectiveLoginRequest.headers), redirects: 5, tags: { name: 'Reauth' } }
+    { headers: sanitizeHeaders(effectiveLoginRequest.headers), redirects: 5, tags: { name: 'Reauth' }, jar: jar }
   );
   const body = getResponseBody(res);
   const sessionToken = extractSessionToken(body);
@@ -500,6 +567,11 @@ correlationVars (see ID CORRELATION above and getByJsonPath/substituteCorrelatio
 captureCorrelationVars helpers above) MUST be threaded through here — resolve
 placeholders in path/payload before sending, then capture this step's own
 produced values after the response comes back.
+CSRF PROPAGATION IS MANDATORY (see captureCsrfToken/__csrfToken above) — every
+request's x-csrf-token header MUST be overridden with __csrfToken whenever it
+is non-empty, taking priority over any x-csrf-token baked into reqDef.headers
+from the HAR capture; that baked value is a snapshot from capture time and
+becomes stale/invalid the moment a fresh one is issued during replay.
 RE-AUTH ON 401 is MANDATORY (rule 15) — build auth headers via ensureAuth()${useCsvCredentials ? '' : '(setupData)'}/authHeadersFromAuth() fresh for every request (not once per iteration — a cached auth object can be replaced mid-iteration by reauth()), and on a 401 call reauth() and retry the SAME request exactly once with the refreshed headers before falling through to normal check()/metrics/error-logging:
 
 function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correlationVars) {
@@ -507,9 +579,21 @@ function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correl
   const payload = substituteCorrelationVars(reqDef.payload, correlationVars);
   const url = BASE_URL + path;
 
+  // Origin/Referer/User-Agent are deliberately NEVER sent — per requirement,
+  // requests must carry only the headers captured from the HAR (see
+  // sanitizeHeaders, which strips these outright if they ever appear). The
+  // x-csrf-token override below MUST run after the Object.assign so a fresh
+  // __csrfToken always wins over whatever x-csrf-token value was captured in
+  // the HAR — the captured one is a stale snapshot from capture time.
   function doRequest(authHeaders) {
+    const headers = Object.assign(
+      {},
+      sanitizeHeaders(reqDef.headers),
+      authHeaders,
+    );
+    if (__csrfToken) headers['x-csrf-token'] = __csrfToken;
     const params = {
-      headers: Object.assign({}, sanitizeHeaders(reqDef.headers), authHeaders),
+      headers: headers,
       redirects: 5,
       tags: { name: reqDef.name },
       jar: jar,
@@ -529,6 +613,11 @@ function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correl
     auth = reauth();
     res = doRequest(authHeadersFromAuth(auth));
   }
+
+  // Must run before check()/metrics below — if THIS step is the
+  // GetModuleRecordAccess call, every subsequent replayStep() call (including
+  // later ones in this same loop) needs the token it just produced.
+  captureCsrfToken(reqDef, res);
 
   // A captured call that 404s on a known-benign endpoint (see
   // isKnownBenignNotFound above), or a DELETE that 404s/409s because the
