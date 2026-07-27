@@ -222,7 +222,8 @@ ${useCsvCredentials
 14. Every VU must use its own cookie jar, never one shared object handed down from setup() — reproduce getVuJar() from the REPLAY HARNESS PATTERN below verbatim and call it in sessionReplay(); do NOT read a jar off setupData.
 15. RE-AUTH ON 401/403 is MANDATORY — reproduce replayStep exactly as shown in the REPLAY HARNESS PATTERN below: on a 401 OR 403 response, call reauth() once, rebuild the request's auth headers from the result, and retry the SAME request exactly once before falling through to normal check()/metrics/error-logging on whichever response (original or retried) is now current. Never retry more than once per step — a second consecutive 401/403 is a real failure, not a transient token expiry.
 16. Per-request response-time checks must use effectiveResponseThreshold(reqDef) (see REPLAY HARNESS PATTERN), NEVER the raw reqDef.responseThresholdMs directly — a single captured HAR sample under no concurrent load is not a reliable per-request SLA under real replay load, and using it verbatim produces noisy false-positive check failures unrelated to actual regressions.
-17. CSRF PROPAGATION IS MANDATORY whenever any captured call targets .../api/internal/Permission/GetModuleRecordAccess — reproduce the module-level \`__csrfToken\` variable and \`captureCsrfToken(reqDef, response)\` from the REPLAY HARNESS PATTERN below verbatim, call it in replayStep right after the response comes back (both the initial and any 401-retry response), and override the request's x-csrf-token header with \`__csrfToken\` whenever it is non-empty — this MUST take priority over any x-csrf-token value baked into reqDef.headers from the HAR capture, which is a stale snapshot from capture time. Do not scope __csrfToken per-iteration (unlike correlationVars) — like the session cookie, it stays valid across iterations once obtained.
+17. CSRF PROPAGATION IS MANDATORY whenever any captured call targets .../api/internal/Permission/GetModuleRecordAccess — reproduce the module-level \`__csrfToken\` variable and \`captureCsrfToken(reqDef, response)\` from the REPLAY HARNESS PATTERN below verbatim, call it in replayStep right after the response comes back (both the initial and any 401-retry response), and override the request's x-csrf-token header with \`__csrfToken\` whenever it is non-empty — this MUST take priority over any x-csrf-token value baked into reqDef.headers from the HAR capture, which is a stale snapshot from capture time. Do not scope __csrfToken per-iteration (unlike correlationVars) — like the session cookie, it stays valid across iterations once obtained. A csrf token is bound to the specific session that produced it — reproduce \`findModuleRecordAccessRequest()\`/\`refreshCsrfToken(jar, authHeaders)\` verbatim too, and call \`refreshCsrfToken(jar, authHeadersFromAuth(__vuAuth))\` at the END of reauth(), right after \`__vuAuth\` is reassigned to the fresh session — otherwise the retried request after a reauth() sends a (new session, old csrf) pair, which Archer's classic /api/* gateway rejects with a generic IIS 403 that looks like a permissions error but is actually this exact mismatch.
+18. EXECUTION ORDER MUST MATCH THE HAR CAPTURE ORDER — CAPTURED_REQUESTS is already injected in the exact order the calls were captured (see its shape description above). Reproduce sessionReplay's loop EXACTLY as shown in the REPLAY HARNESS PATTERN below: a plain sequential \`for (let i = 0; i < replayRequests.length; i++)\` over the array as given, calling replayStep(replayRequests[i], ...) and letting that request's response come back (k6's http.request() is already synchronous/blocking, so this happens naturally) before moving on to i+1. Do NOT sort, group by method/endpoint, batch, deduplicate further, reverse, or otherwise reorder CAPTURED_REQUESTS or replayRequests in any way — a captured Login→CreateRecord→DeleteRecord flow depends on that exact sequence (e.g. DeleteRecord referencing an id CreateRecord just produced via ID CORRELATION per rule 13); replaying out of order breaks the flow even if every individual request is otherwise correct.
 
 ${buildInfluxBlock(baseUrl)}
 ${useCsvCredentials ? buildCsvCredentialAuthPatternBlock() : ''}
@@ -342,6 +343,35 @@ function captureCsrfToken(reqDef, response) {
     __csrfToken = token;
     console.log('VU ' + __VU + ': captured fresh csrf-token from ' + reqDef.name);
   }
+}
+
+// Finds the captured GetModuleRecordAccess entry in CAPTURED_REQUESTS, if any
+// was captured. Used by reauth() below — never throws, just returns null when
+// this session's HAR capture never hit that endpoint.
+function findModuleRecordAccessRequest() {
+  return CAPTURED_REQUESTS.find(function (r) { return /GetModuleRecordAccess/i.test(String(r.path || '')); }) || null;
+}
+
+// A csrf token is bound to the session that produced it — the moment reauth()
+// obtains a NEW session cookie, the OLD __csrfToken becomes invalid for it,
+// even though it still looks like a normal-shaped token. Sending a mismatched
+// (session, csrf) pair to Archer's classic /api/* gateway gets rejected with a
+// generic IIS 403 "Forbidden: Access is denied" page — NOT a 401, so it is
+// easy to mistake for a permissions issue rather than what it actually is:
+// a stale csrf token left over from the session that just expired. Re-running
+// the captured GetModuleRecordAccess call with the FRESH session immediately
+// after reauth() fixes this by re-priming __csrfToken to match.
+function refreshCsrfToken(jar, authHeaders) {
+  const reqDef = findModuleRecordAccessRequest();
+  if (!reqDef) return;
+  const headers = Object.assign({}, sanitizeHeaders(reqDef.headers), authHeaders);
+  const res = http.request(
+    reqDef.method,
+    BASE_URL + reqDef.path,
+    requestBody(reqDef.payload, reqDef.payloadType),
+    { headers: headers, redirects: 5, tags: { name: (reqDef.name || reqDef.path) + ' (csrf-refresh)' }, jar: jar }
+  );
+  captureCsrfToken(reqDef, res);
 }
 
 // Some endpoints are known to legitimately 404 depending on environment/record
@@ -568,6 +598,13 @@ function reauth() {
   const jwt = extractJwt(body);
   __vuAuth = { cookieHeader: buildCookieHeader(res, sessionToken, effectiveLoginRequest), jwt: jwt };
   console.log('VU ' + __VU + ': re-authenticated (status ' + res.status + ').');
+
+  // The OLD __csrfToken (from the session that just expired) is invalid for
+  // this brand-new session — re-priming it now (see refreshCsrfToken's
+  // comment above) prevents the retried request right after this from
+  // failing again with a 403 due to a (new session, old csrf) mismatch.
+  refreshCsrfToken(jar, authHeadersFromAuth(__vuAuth));
+
   return __vuAuth;
 }`}
 
@@ -701,6 +738,10 @@ ${useCsvCredentials ? `
   // OWN created resources, not another VU's (see ID CORRELATION above).
   const correlationVars = {};
 
+  // Sequential, index order, exactly as captured (rule 18) — .filter() above
+  // only removes the login entry, it never reorders; do NOT sort/group/batch
+  // replayRequests before this loop. A stateful flow (e.g. Login -> Create ->
+  // Delete) depends on this exact sequence.
   for (let i = 0; i < replayRequests.length; i++) {
     const reqDef = replayRequests[i];
     group(reqDef.name, function () {

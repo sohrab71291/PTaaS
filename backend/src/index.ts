@@ -42,7 +42,14 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+// POST/PUT /api/test-specs persists the original uploaded HAR/JSON file(s) as
+// base64 inside uploadedFiles (so re-opening a saved suite doesn't require
+// re-uploading) — the HAR upload endpoints themselves (upload.ts/harGenerate.ts)
+// already accept files up to 200MB via multer, and base64 inflates that by
+// ~1.37x, so this limit must be raised to match rather than sit far below it
+// (a 5mb cap here made every HAR over ~3.6MB raw fail to SAVE even though it
+// generated successfully).
+app.use(express.json({ limit: '250mb' }));
 app.use(requestLogger);
 
 // Public routes (no JWT required)

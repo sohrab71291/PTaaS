@@ -514,10 +514,24 @@ THIS call's own response, every time the script runs:
 
 const csrfToken = res.headers['csrf-token'] || res.headers['Csrf-Token'] || '';
 
+x-archer-source IS MANDATORY on every OTHER classic Archer /api/* call (not
+just GetModuleRecordAccess) whenever the test case data captured one for that
+specific call — Archer's classic API gateway validates x-archer-source
+ALONGSIDE the csrf token to authorize the request, and its value is
+call-specific (e.g. "Archer,ConsumerResources" vs "Archer,Translations" vs
+"Archer,Navigation" — never a fixed/shared constant across endpoints). Dropping
+it produces a 403 "Forbidden: Access is denied" even though the session
+cookie and csrf token are both valid — this is NOT an auth failure, so do not
+mistake it for one and do not omit this header to "simplify" the request.
+Copy it VERBATIM per-call from that exact request's captured headers in the
+test case data — do NOT invent, reuse another call's value, or hardcode one:
+
 // Every authenticated request AFTER this one — but not this call itself —
-// MUST include x-csrf-token: csrfToken alongside its other headers:
+// MUST include x-csrf-token: csrfToken, and MUST include x-archer-source
+// verbatim from THAT call's own captured headers (when the test case data
+// has one for it) alongside its other headers:
 const laterParams = {
-  headers: { ...authHeaders, 'x-csrf-token': csrfToken, 'Content-Type': 'application/json' },
+  headers: { ...authHeaders, 'x-csrf-token': csrfToken, 'x-archer-source': '<verbatim from this call\\'s captured headers, if present>', 'Content-Type': 'application/json' },
   tags: { name: '<RequestName>' },
 };
 `;
