@@ -51,6 +51,24 @@ function remapDatasourceRefs(spec: any, liveInfluxUid: string): any {
   return JSON.parse(serialized);
 }
 
+// The committed Grafana_Dashboard.json's Flux queries all hardcode
+// `bucket: "PerfDB"` (a leftover from whoever originally exported it) —
+// every generated k6 script actually writes to INFLUX_V2_BUCKET, which
+// jobDispatcher sets from process.env.INFLUXDB_BUCKET. If that env var is
+// set to anything other than "PerfDB" (e.g. "k6"), the dashboard queries an
+// empty/wrong bucket and every panel renders with no data even though
+// InfluxDB, Grafana, and the datasource are all otherwise correctly
+// configured. Rewrite the literal bucket name in every query on sync so the
+// dashboard always matches whatever bucket this install actually writes to,
+// the same self-healing approach remapDatasourceRefs uses for datasource UIDs.
+function remapBucketRefs(spec: any, bucketName: string): any {
+  const serialized = JSON.stringify(spec).replace(
+    /bucket: \\"PerfDB\\"/g,
+    `bucket: \\"${bucketName}\\"`
+  );
+  return JSON.parse(serialized);
+}
+
 // Dashboards are managed as Kubernetes-style resources under
 // dashboard.grafana.app/v2 (this Grafana version has no legacy
 // /api/dashboards/db model compatible with the v2 panel/layout schema used
@@ -122,7 +140,8 @@ router.post('/grafana/sync-dashboard', async (_req: Request, res: Response) => {
     return;
   }
 
-  const spec = remapDatasourceRefs(dashboardFile.spec, datasourceUid);
+  const bucketName = process.env.INFLUXDB_BUCKET || 'PerfDB';
+  const spec = remapBucketRefs(remapDatasourceRefs(dashboardFile.spec, datasourceUid), bucketName);
   const existing = await getDashboardResource(grafanaUrl, uid);
 
   const payload: any = {
