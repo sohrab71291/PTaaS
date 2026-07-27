@@ -376,9 +376,21 @@ function extractJwt(body) {
     body.Jwt || body.jwt || body.AccessToken || body.access_token || body.token || ''
   );
 }
+// Deliberately never sets a Cookie header — Cookie comes exclusively from the
+// VU's cookie jar (getVuJar(), seeded/refreshed by ensureAuth() below), which
+// every request already carries via { jar: getVuJar() }. Setting one here
+// would override the jar's actual contents (an explicit Cookie header always
+// wins over a jar), silently hiding any cookie the app sets mid-session — the
+// classic __ArcherSessionCookie__ does NOT necessarily authenticate the newer
+// ngrx/Angular API surface (/ngrx/*), which commonly gets its own
+// archer_ngrx_* JWT cookie from a SEPARATE bootstrap call sometime after
+// login, not from login itself. A frozen Cookie string built once at login
+// would never include that cookie, and every /ngrx/* call would 401 forever
+// even with a perfectly valid session — the jar picks it up automatically
+// instead, exactly like a real browser, as long as no explicit Cookie header
+// ever overrides it.
 function authHeadersFromAuth(auth) {
   const headers = {};
-  if (auth && auth.cookieHeader) headers.Cookie = auth.cookieHeader;
   if (auth && auth.jwt) headers.Authorization = 'Bearer ' + auth.jwt;
   return headers;
 }
@@ -391,10 +403,11 @@ function ensureAuth() {
   // ArgumentNullException on request.Credentials.InstanceName if it's missing.
   // Always include it verbatim from the CSV row, never omit or default it.
   const loginPayload = { Username: cred.username, Password: cred.password, InstanceName: cred.instanceName };
+  const jar = getVuJar();
   const res = http.post(
     cred.loginUrl,
     JSON.stringify(loginPayload),
-    { headers: { 'Content-Type': 'application/json' }, tags: { name: 'Login' }, jar: getVuJar() },
+    { headers: { 'Content-Type': 'application/json' }, tags: { name: 'Login' }, jar: jar },
   );
   let body = {};
   try { body = res.json(); } catch (e) { body = {}; }
@@ -403,11 +416,15 @@ function ensureAuth() {
   if (!sessionToken && !jwt) {
     fail('Login failed for VU ' + __VU + ': ' + JSON.stringify(body).substring(0, 300));
   }
-  __vuAuth = {
-    sessionToken: sessionToken,
-    jwt: jwt,
-    cookieHeader: sessionToken ? '__ArcherSessionCookie__=' + sessionToken : '',
-  };
+  // Archer's classic login API returns the session token in the JSON body
+  // only — it does NOT set a real Set-Cookie itself, so the jar needs to be
+  // seeded manually here. If a future/different login response DOES set real
+  // cookies via Set-Cookie, those already landed in the jar automatically
+  // (this request ran with { jar: jar }), making this a harmless no-op then.
+  if (sessionToken && (!res.cookies || Object.keys(res.cookies).length === 0)) {
+    jar.set(BASE_URL, '__ArcherSessionCookie__', sessionToken);
+  }
+  __vuAuth = { jwt: jwt };
   console.log('VU ' + __VU + ': Successfully authenticated as ' + cred.username + (jwt ? ' (session cookie + bearer JWT)' : ' (session cookie only)'));
   return __vuAuth;
 }
@@ -436,8 +453,9 @@ function reauth() {
 
 Every exec function MUST call ensureAuth() at the very start of the iteration
 (NOT in setup() — each VU logs in lazily on its own first iteration) and use
-the resulting headers (Cookie and, when the login returned a JWT, an
-Authorization: Bearer header too) on every authenticated request:
+the resulting headers (only Authorization: Bearer, when the login returned a
+JWT — Cookie is deliberately NOT part of authHeaders, see authHeadersFromAuth's
+comment above) on every authenticated request:
 
 export function <execFnName>() {
   const auth = ensureAuth();

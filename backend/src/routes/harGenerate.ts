@@ -81,7 +81,6 @@ function stripAuthHeaders(headers: Record<string, string>): Record<string, strin
 // response's csrf-token header) — it must never carry a stale/"null"
 // x-csrf-token captured from the HAR, and it needs x-http-method-override
 // instead, per explicit product requirement:
-//   Cookie:                 __ArcherSessionCookie__=<token>
 //   x-http-method-override: GET
 //   Content-Type:           application/json
 const MODULE_RECORD_ACCESS_RE = /GetModuleRecordAccess/i;
@@ -89,8 +88,6 @@ const MODULE_RECORD_ACCESS_RE = /GetModuleRecordAccess/i;
 // STRICT HEADER ALLOWLIST for every non-login replay call — per explicit
 // product requirement, the generated script must carry ONLY these headers
 // on non-login requests, taken from the HAR exactly as specified:
-//   - Cookie: ONLY the __ArcherSessionCookie__=<token> value (never any other
-//     cookie captured on the request)
 //   - x-csrf-token: verbatim from the HAR's own Header section
 //   - Content-Type: application/json (fixed, not the HAR's captured mimeType)
 //   - x-archer-source: verbatim from the HAR's own Header section, when
@@ -104,19 +101,26 @@ const MODULE_RECORD_ACCESS_RE = /GetModuleRecordAccess/i;
 //     present — only some classic endpoints send it (e.g. ConsumerResources),
 //     others legitimately omit it (e.g. ConsumerGroups), so it must be
 //     copied per-call rather than assumed universal.
+// Cookie is deliberately NEVER baked in here — the __ArcherSessionCookie__
+// literal captured in the HAR is stale by replay time, and freezing a Cookie
+// string at generation time (or even once at runtime login) also permanently
+// hides any OTHER session cookie the app sets later mid-flow (e.g. Archer's
+// ngrx/Angular surface issues its own archer_ngrx_* JWT cookie via a
+// bootstrap call sometime after login, not at login itself) — an explicit
+// Cookie header always wins over whatever a k6 cookie jar would have sent, so
+// baking one here would silently suppress that cookie for the rest of the
+// run. The REPLAY HARNESS PATTERN's runtime cookie jar (passed to every
+// request, including login/reauth) is the sole source of Cookie instead — it
+// accumulates every Set-Cookie exactly like a real browser would.
 // Every other header key present in the HAR is ignored outright.
 function buildReplayHeaders(tc: ParsedTestCase): Record<string, string> {
-  const cookie = tc.archerSessionToken ? `__ArcherSessionCookie__=${tc.archerSessionToken}` : undefined;
   const findHeader = (name: string) => Object.entries(tc.headers).find(([k]) => k.toLowerCase() === name)?.[1];
 
   if (MODULE_RECORD_ACCESS_RE.test(tc.url)) {
-    const headers: Record<string, string> = { 'x-http-method-override': 'GET', 'Content-Type': 'application/json' };
-    if (cookie) headers.Cookie = cookie;
-    return headers;
+    return { 'x-http-method-override': 'GET', 'Content-Type': 'application/json' };
   }
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (cookie) headers.Cookie = cookie;
   const csrfToken = findHeader('x-csrf-token');
   if (csrfToken) headers['x-csrf-token'] = csrfToken;
   const archerSource = findHeader('x-archer-source');
@@ -266,6 +270,10 @@ function sanitizeHeaders(headers) {
   // user-agent/origin/referer are stripped outright too — per requirement,
   // requests must never carry these, and k6 supplies its own default
   // User-Agent when none is set rather than the request being sent bare.
+  // cookie is ALSO stripped unconditionally — Cookie must come from the
+  // runtime cookie jar exclusively (see buildReplayHeaders' comment above),
+  // never from a captured/static value, so any Cookie key that somehow ends
+  // up in reqDef.headers must never reach the actual request.
   const sanitized = {};
   if (!headers) return sanitized;
   Object.keys(headers).forEach(function (name) {
@@ -273,7 +281,8 @@ function sanitizeHeaders(headers) {
     if (value === undefined || value === null || String(value).trim() === '') return;
     const normalizedName = String(name).toLowerCase();
     if (normalizedName === 'content-length' || normalizedName === 'transfer-encoding'
-      || normalizedName === 'user-agent' || normalizedName === 'origin' || normalizedName === 'referer') return;
+      || normalizedName === 'user-agent' || normalizedName === 'origin' || normalizedName === 'referer'
+      || normalizedName === 'cookie') return;
     sanitized[name] = value;
   });
   return sanitized;
@@ -407,23 +416,28 @@ function effectiveResponseThreshold(reqDef) {
   return Math.max(reqDef.responseThresholdMs, RESPONSE_THRESHOLD_FLOOR_MS);
 }
 
-function buildCookieHeader(response, fallbackToken, loginRequest) {
-  // Prefer real Set-Cookie cookies from the login response (k6 exposes these
-  // on response.cookies regardless of the VU cookie jar) — this is what a
-  // browser would actually send. Fall back to a cookie built from the
-  // extracted token using cookieNameHint (or 'session') so cookie-based
-  // session APIs still work when the token only appears in the JSON body.
-  const cookieParts = [];
+// Returns [{name, value}] from a login-shaped response's real Set-Cookie
+// values — k6 exposes response.cookies regardless of whether the request
+// used a jar, which matters for setup()'s ONE jar-less shared login call.
+// Falls back to a single synthetic pair built from the extracted token (using
+// cookieNameHint, or 'session') ONLY when the login returned it purely in the
+// JSON body with no Set-Cookie at all. Callers seed a cookie jar from this —
+// see ensureAuth()/reauth() below — rather than ever building a static Cookie
+// header string (a frozen header always wins over the jar and would silently
+// hide any OTHER cookie the app sets later, e.g. an ngrx JWT cookie minted by
+// a bootstrap call after login rather than by login itself).
+function extractLoginCookies(response, fallbackToken, loginRequest) {
+  const pairs = [];
   if (response && response.cookies) {
     Object.keys(response.cookies).forEach(function (cookieName) {
       const cookie = response.cookies[cookieName][0];
-      if (cookie) cookieParts.push(cookieName + '=' + cookie.value);
+      if (cookie) pairs.push({ name: cookieName, value: cookie.value });
     });
   }
-  if (cookieParts.length === 0 && fallbackToken) {
-    cookieParts.push((loginRequest && loginRequest.cookieNameHint ? loginRequest.cookieNameHint : 'session') + '=' + fallbackToken);
+  if (pairs.length === 0 && fallbackToken) {
+    pairs.push({ name: (loginRequest && loginRequest.cookieNameHint) ? loginRequest.cookieNameHint : 'session', value: fallbackToken });
   }
-  return cookieParts.join('; ');
+  return pairs;
 }
 
 Write this helper once, before setup() too — k6's setup() runs ONCE for the
@@ -489,9 +503,14 @@ function extractJwt(body) {
     body.Jwt || body.jwt || body.AccessToken || ''
   );
 }
+// Deliberately never sets a Cookie header — Cookie comes exclusively from the
+// per-VU cookie jar (seeded/refreshed by ensureAuth()/reauth() above), which
+// every request already carries via { jar: jar }. Setting one here would
+// override the jar's actual contents (an explicit Cookie header always wins),
+// silently hiding any cookie the app sets mid-session (see extractLoginCookies'
+// comment above).
 function authHeadersFromAuth(auth) {
   const headers = {};
-  if (auth && auth.cookieHeader) headers.Cookie = auth.cookieHeader;
   if (auth && auth.jwt) headers.Authorization = 'Bearer ' + auth.jwt;
   return headers;
 }
@@ -504,7 +523,8 @@ but do NOT create or return a cookie jar here: a jar created in setup() is the
 exact same mutable object handed to every VU via setupData, so one VU's
 responses would silently populate cookies another VU's requests then pick up.
 Each VU gets its own jar lazily via getVuJar() (declared above) instead —
-only the resulting cookieHeader/jwt (immutable strings, safe to share) are
+only the resulting cookies array/jwt (immutable data, safe to share — each VU
+seeds ITS OWN jar from the cookies array via ensureAuth(), see below) are
 threaded through setupData. Use findLoginRequest() to find the login call — if
 it returns null, there is genuinely nothing to authenticate with, so log that
 and continue:
@@ -538,20 +558,20 @@ export function setup() {
   const body = getResponseBody(res);
   const sessionToken = extractSessionToken(body);
   const jwt = extractJwt(body);
-  const cookieHeader = buildCookieHeader(res, sessionToken, effectiveLoginRequest);
+  const cookies = extractLoginCookies(res, sessionToken, effectiveLoginRequest);
 
   // NEVER throw here, even when the login produced nothing usable — a broken
   // or expired captured login must degrade to "requests run unauthenticated"
   // (later calls will now correctly surface as REAL 401/403 failures — see
   // isResponseStatusExpected — instead of stopping the whole run before any
   // other request gets a chance to execute).
-  if (!cookieHeader && !jwt && !(res.status >= 300 && res.status < 400)) {
+  if (cookies.length === 0 && !jwt && !(res.status >= 300 && res.status < 400)) {
     console.warn('Setup: authentication request returned no session data; continuing without auth headers.');
     return null;
   }
 
   console.log('Setup: authentication completed with status ' + res.status + '.' + (jwt ? ' (session cookie + bearer JWT)' : ''));
-  return { cookieHeader: cookieHeader, jwt: jwt };
+  return { cookies: cookies, jwt: jwt };
 }
 
 Write these two helpers once, before setup() — every VU starts from the ONE
@@ -561,18 +581,24 @@ moment its session actually expires, via reauth() (see replayStep's 401 retry
 below) — never a second run-wide relogin shared by every VU:
 
 let __vuAuth = null; // per-VU cache — module scope is per-VU in k6, so this is NOT shared across VUs
-function ensureAuth(setupData) {
+function ensureAuth(setupData, jar) {
   if (__vuAuth) return __vuAuth;
-  __vuAuth = (setupData && (setupData.cookieHeader || setupData.jwt))
-    ? { cookieHeader: setupData.cookieHeader || '', jwt: setupData.jwt || '' }
-    : { cookieHeader: '', jwt: '' };
+  // Seed THIS VU's own jar from setup()'s single shared login (setup() has no
+  // jar of its own — see its comment above — so this is the first time these
+  // cookies attach to any jar). Every later request passes { jar: jar }, so
+  // from here on the jar is the sole source of Cookie — never a static string.
+  if (setupData && Array.isArray(setupData.cookies)) {
+    setupData.cookies.forEach(function (c) { jar.set(BASE_URL, c.name, c.value); });
+  }
+  __vuAuth = { jwt: (setupData && setupData.jwt) || '' };
   return __vuAuth;
 }
 function reauth() {
   console.warn('VU ' + __VU + ': got 401 — re-authenticating.');
   const effectiveLoginRequest = findLoginRequest(CAPTURED_REQUESTS);
+  const jar = getVuJar();
   if (!effectiveLoginRequest) {
-    __vuAuth = { cookieHeader: '', jwt: '' };
+    __vuAuth = { jwt: '' };
     return __vuAuth;
   }
   // The server responds to an unauthenticated/expired-session call by setting
@@ -582,7 +608,6 @@ function reauth() {
   // along next to the brand-new session cookie on every subsequent request,
   // causing an immediate re-401 regardless of how valid the fresh session is.
   // Wipe the jar for BASE_URL before re-login so only the fresh cookie survives.
-  const jar = getVuJar();
   const stale = jar.cookiesForURL(BASE_URL) || {};
   Object.keys(stale).forEach(function (name) {
     jar.set(BASE_URL, name, '', { expires: new Date(0).toUTCString() });
@@ -596,7 +621,14 @@ function reauth() {
   const body = getResponseBody(res);
   const sessionToken = extractSessionToken(body);
   const jwt = extractJwt(body);
-  __vuAuth = { cookieHeader: buildCookieHeader(res, sessionToken, effectiveLoginRequest), jwt: jwt };
+  // Set-Cookie from this response already landed in the jar automatically since
+  // the request above ran with { jar } — this loop only matters for the
+  // fallback case (session token returned purely in the JSON body, no
+  // Set-Cookie at all); re-setting already-present cookies here is harmless.
+  extractLoginCookies(res, sessionToken, effectiveLoginRequest).forEach(function (c) {
+    jar.set(BASE_URL, c.name, c.value);
+  });
+  __vuAuth = { jwt: jwt };
   console.log('VU ' + __VU + ': re-authenticated (status ' + res.status + ').');
 
   // The OLD __csrfToken (from the session that just expired) is invalid for
@@ -625,7 +657,7 @@ request's x-csrf-token header MUST be overridden with __csrfToken whenever it
 is non-empty, taking priority over any x-csrf-token baked into reqDef.headers
 from the HAR capture; that baked value is a snapshot from capture time and
 becomes stale/invalid the moment a fresh one is issued during replay.
-RE-AUTH ON 401 is MANDATORY (rule 15) — build auth headers via ensureAuth()${useCsvCredentials ? '' : '(setupData)'}/authHeadersFromAuth() fresh for every request (not once per iteration — a cached auth object can be replaced mid-iteration by reauth()), and on a 401 call reauth() and retry the SAME request exactly once with the refreshed headers before falling through to normal check()/metrics/error-logging:
+RE-AUTH ON 401 is MANDATORY (rule 15) — build auth headers via ensureAuth()${useCsvCredentials ? '' : '(setupData, jar)'}/authHeadersFromAuth() fresh for every request (not once per iteration — a cached auth object can be replaced mid-iteration by reauth()), and on a 401 call reauth() and retry the SAME request exactly once with the refreshed headers before falling through to normal check()/metrics/error-logging:
 
 function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correlationVars) {
   const path = substituteCorrelationVars(reqDef.path, correlationVars);
@@ -654,7 +686,7 @@ function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correl
     return http.request(reqDef.method, url, requestBody(payload, reqDef.payloadType), params);
   }
 
-  let auth = ensureAuth(${useCsvCredentials ? '' : 'setupData'});
+  let auth = ensureAuth(${useCsvCredentials ? '' : 'setupData, jar'});
   let res = doRequest(authHeadersFromAuth(auth));
 
   // A 30-min (or otherwise time-limited) token can expire mid-run — a bare
