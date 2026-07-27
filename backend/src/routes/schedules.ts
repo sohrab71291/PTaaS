@@ -8,7 +8,7 @@ router.get('/', async (_req: Request, res: Response) => {
 });
 
 router.post('/', async (req: Request, res: Response) => {
-  const { name, specId, environmentId, cronExpression, enabled, notificationConfigId } = req.body;
+  const { name, specId, environmentId, cronExpression, enabled, notificationConfigId, fetchFromGithub } = req.body;
 
   if (!name || !specId || !cronExpression) {
     return res.status(400).json({ error: 'name, specId, and cronExpression are required' });
@@ -21,6 +21,7 @@ router.post('/', async (req: Request, res: Response) => {
     cronExpression,
     enabled: enabled !== false,
     notificationConfigId: notificationConfigId || null,
+    fetchFromGithub: fetchFromGithub === true,
   });
 
   return res.status(201).json(schedule);

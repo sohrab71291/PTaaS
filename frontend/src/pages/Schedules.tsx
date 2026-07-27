@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Calendar, Plus, Trash2, Play, Edit2, X, Loader2,
-  Clock, ToggleLeft, ToggleRight, Bell, Sliders, ChevronDown, ChevronRight, History,
+  Clock, ToggleLeft, ToggleRight, Bell, Sliders, ChevronDown, ChevronRight, History, Github,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
@@ -18,6 +18,7 @@ interface Schedule {
   cronExpression: string;
   enabled: boolean;
   notificationConfigId: string | null;
+  fetchFromGithub: boolean;
   createdAt: string;
   updatedAt: string;
   lastRunAt: string | null;
@@ -103,6 +104,7 @@ const emptyForm = {
   cronExpression: '0 9 * * *',
   enabled: true,
   notificationConfigId: '',
+  fetchFromGithub: false,
 };
 
 type CronTab = 'presets' | 'custom' | 'raw';
@@ -122,6 +124,7 @@ const ScheduleModal: React.FC<{
     cronExpression: schedule.cronExpression,
     enabled: schedule.enabled,
     notificationConfigId: schedule.notificationConfigId || '',
+    fetchFromGithub: schedule.fetchFromGithub || false,
   } : emptyForm);
   const [cronTab, setCronTab] = useState<CronTab>('presets');
   const [custom, setCustom] = useState<CustomTime>(defaultCustom);
@@ -395,6 +398,21 @@ const ScheduleModal: React.FC<{
             </button>
           </div>
 
+          {/* Fetch from GitHub toggle */}
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setForm(f => ({ ...f, fetchFromGithub: !f.fetchFromGithub }))}
+              className={`flex items-center gap-2 text-sm font-medium transition-colors ${form.fetchFromGithub ? 'text-brand-600' : 'text-gray-400'}`}
+            >
+              {form.fetchFromGithub
+                ? <ToggleRight size={22} className="text-brand-500" />
+                : <ToggleLeft size={22} />}
+              <Github size={14} />
+              Fetch script from GitHub on each run
+            </button>
+          </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
               Cancel
@@ -585,6 +603,11 @@ export const Schedules: React.FC = () => {
                       {s.notificationConfigId && (
                         <span className="flex items-center gap-1 text-xs text-blue-500">
                           <Bell size={12} /> Alert configured
+                        </span>
+                      )}
+                      {s.fetchFromGithub && (
+                        <span className="flex items-center gap-1 text-xs text-gray-500">
+                          <Github size={12} /> GitHub sync
                         </span>
                       )}
                     </div>

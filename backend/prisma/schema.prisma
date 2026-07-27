@@ -122,6 +122,7 @@ model Schedule {
   cronExpression       String
   enabled              Boolean     @default(true)
   notificationConfigId String?
+  fetchFromGithub      Boolean     @default(false)
   lastRunAt            DateTime?
   lastRunStatus        String?
   nextRunAt            DateTime?

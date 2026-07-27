@@ -1,8 +1,17 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import prisma from '../lib/prisma';
 import { generateK6Script } from '../services/k6Generator';
+import { pushScript } from '../services/githubService';
 
 const router = Router();
+
+// Fire-and-forget push — never let a GitHub hiccup fail the save request.
+function syncScriptToGithub(specId: string, name: string, script: string | null | undefined) {
+  if (!script) return;
+  pushScript(specId, script, `Update script for "${name}" (${specId})`).catch(err => {
+    console.warn(`[GitHub] Unexpected error pushing script for spec ${specId}: ${err.message}`);
+  });
+}
 
 router.get('/', async (_req: Request, res: Response) => {
   const specs = await prisma.testSpec.findMany({ orderBy: { createdAt: 'desc' } });
@@ -39,6 +48,7 @@ router.post('/', async (req: Request, res: Response) => {
         ...(uploadedFiles != null ? { uploadedFiles } : {}),
       },
     });
+    syncScriptToGithub(updated.id, updated.name, generatedScript);
     return res.json(updated);
   }
 
@@ -62,6 +72,7 @@ router.post('/', async (req: Request, res: Response) => {
       lastRunAt: null,
     },
   });
+  syncScriptToGithub(spec.id, spec.name, generatedScript);
   return res.status(201).json(spec);
 });
 
@@ -99,6 +110,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         scheduledAt: req.body.scheduledAt ? new Date(req.body.scheduledAt) : null,
       },
     });
+    syncScriptToGithub(updated.id, updated.name, req.body.generatedScript);
     return res.json(updated);
   } catch {
     return res.status(404).json({ error: 'Not found' });

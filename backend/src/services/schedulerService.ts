@@ -4,6 +4,7 @@ import prisma from '../lib/prisma';
 import { generateK6Script } from './k6Generator';
 import { dispatchJob } from './jobDispatcher';
 import { notificationService } from './notificationService';
+import { fetchScript } from './githubService';
 import type { Schedule } from '@prisma/client';
 
 const activeTasks = new Map<string, ReturnType<typeof cron.schedule>>();
@@ -76,17 +77,31 @@ async function runSchedule(schedule: Schedule) {
   let lastRunStatus = 'dispatched';
   let finalExecution = execution;
 
-  try {
-    const script = generateK6Script(spec as any, baseUrl);
-    await dispatchJob(execution.id, script, {
-      baseUrl,
-      profileType: (spec.loadProfile as any)?.type || 'staged',
-      stages: (spec.loadProfile as any)?.stages || [],
-    });
-  } catch (err: any) {
-    console.warn(`[Scheduler] Dispatch failed for schedule ${schedule.id}: ${err.message}`);
-    lastRunStatus = 'failed';
-    finalExecution = await prisma.execution.update({ where: { id: execution.id }, data: { status: 'fail' } });
+  const dispatchConfig = {
+    baseUrl,
+    profileType: (spec.loadProfile as any)?.type || 'staged',
+    stages: (spec.loadProfile as any)?.stages || [],
+  };
+
+  if ((schedule as any).fetchFromGithub) {
+    // Fetch + dispatch happens off the scheduler's critical path — the cron
+    // tick (and any triggerNow HTTP request) returns as soon as the
+    // Execution row is queued, without waiting on the GitHub round-trip.
+    fetchScript(spec.id)
+      .then(script => dispatchJob(execution.id, script, dispatchConfig))
+      .catch(async (err: any) => {
+        console.warn(`[Scheduler] GitHub fetch/dispatch failed for schedule ${schedule.id}: ${err.message}`);
+        await prisma.execution.update({ where: { id: execution.id }, data: { status: 'fail' } });
+      });
+  } else {
+    try {
+      const script = generateK6Script(spec as any, baseUrl);
+      await dispatchJob(execution.id, script, dispatchConfig);
+    } catch (err: any) {
+      console.warn(`[Scheduler] Dispatch failed for schedule ${schedule.id}: ${err.message}`);
+      lastRunStatus = 'failed';
+      finalExecution = await prisma.execution.update({ where: { id: execution.id }, data: { status: 'fail' } });
+    }
   }
 
   await prisma.schedule.update({
@@ -161,6 +176,7 @@ export const schedulerService = {
     cronExpression: string;
     enabled: boolean;
     notificationConfigId: string | null;
+    fetchFromGithub?: boolean;
   }) => {
     const schedule = await prisma.schedule.create({
       data: { ...data, nextRunAt: data.enabled ? computeNextRun(data.cronExpression) : null },
