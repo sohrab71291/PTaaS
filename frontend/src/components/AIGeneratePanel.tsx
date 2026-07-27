@@ -3,7 +3,7 @@ import { useDropzone } from 'react-dropzone';
 import {
   Sparkles, Upload, FileText, X,
   Copy, Send, Loader2, AlertCircle, CheckCircle,
-  FileSpreadsheet, File, RotateCcw,
+  FileSpreadsheet, File as FileIcon, RotateCcw,
 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import { ToastContainer } from './ToastContainer';
@@ -31,6 +31,12 @@ export interface SpecContext {
   slos: any[];
 }
 
+export interface StoredFile {
+  name: string;
+  content: string; // base64
+  mimeType: string;
+}
+
 interface AIGeneratePanelProps {
   onScriptGenerated?: (script: string) => void;
   testType: string;
@@ -41,15 +47,42 @@ interface AIGeneratePanelProps {
   disabled?: boolean;
   disabledReason?: string;
   embedded?: boolean;
+  credentialBatchId?: string | null;
+  // Restores a previously-uploaded file (persisted with the test suite) so
+  // editing a saved suite doesn't force a re-upload before Generate works again.
+  initialFile?: StoredFile | null;
+  // Fired whenever the active file changes (uploaded or restored) so the
+  // parent can persist it alongside the test suite.
+  onFileChange?: (file: StoredFile | null) => void;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',').pop() || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function base64ToFile(stored: StoredFile): File {
+  const bytes = atob(stored.content);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new File([arr], stored.name, { type: stored.mimeType });
 }
 
 export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
   onScriptGenerated, testType, complexity, loadProfile, envVarKeys,
-  specContext, disabled, disabledReason, embedded,
+  specContext, disabled, disabledReason, embedded, credentialBatchId,
+  initialFile, onFileChange,
 }) => {
-  const [file, setFile]                       = useState<File | null>(null);
+  const [file, setFile]                       = useState<File | null>(
+    () => (initialFile ? base64ToFile(initialFile) : null)
+  );
   const [pastedContent, setPastedContent]     = useState('');
   const [inputMode, setInputMode]             = useState<'file' | 'paste'>('file');
+  const [useCsvCredentials, setUseCsvCredentials] = useState(false);
   const [status, setStatus]                   = useState<'idle' | 'generating' | 'complete' | 'error'>('idle');
   const [statusMessage, setStatusMessage]     = useState('');
   const [streamingScript, setStreamingScript] = useState('');
@@ -61,11 +94,17 @@ export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
   const { toasts, addToast, removeToast } = useToast();
 
   const onDrop = useCallback((accepted: File[]) => {
-    if (accepted[0]) { setFile(accepted[0]); setError(''); }
-  }, []);
+    const f = accepted[0];
+    if (!f) return;
+    setFile(f);
+    setError('');
+    if (onFileChange) {
+      fileToBase64(f).then(content => onFileChange({ name: f.name, content, mimeType: f.type || 'application/octet-stream' }));
+    }
+  }, [onFileChange]);
 
   const ALLOWED_EXTS = ['.csv', '.xls', '.xlsx', '.yaml', '.yml', '.txt'];
-  const MAX_FILE_BYTES = 50 * 1024 * 1024;
+  const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -97,7 +136,7 @@ export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
     const ext = name.split('.').pop()?.toLowerCase();
     if (['xls', 'xlsx'].includes(ext ?? '')) return <FileSpreadsheet size={16} className="text-green-400" />;
     if (ext === 'csv') return <FileText size={16} className="text-blue-400" />;
-    return <File size={16} className="text-gray-400" />;
+    return <FileIcon size={16} className="text-gray-400" />;
   };
 
   const handleGenerateAI = async () => {
@@ -118,6 +157,10 @@ export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
     formData.append('loadProfile', JSON.stringify(loadProfile));
     if (envVarKeys.length) formData.append('envVarKeys', JSON.stringify(envVarKeys));
     formData.append('specContext', JSON.stringify(specContext));
+    if (useCsvCredentials) {
+      formData.append('useCsvCredentials', 'true');
+      if (credentialBatchId) formData.append('credentialBatchId', credentialBatchId);
+    }
 
     try {
       const token = localStorage.getItem('auth_token');
@@ -204,6 +247,7 @@ export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
 
   const handleReset = () => {
     setFile(null);
+    onFileChange?.(null);
     setPastedContent('');
     setStreamingScript('');
     setFinalScript('');
@@ -288,7 +332,7 @@ export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
                   <p className="text-sm font-medium text-gray-800 truncate">{file.name}</p>
                   <p className="text-xs text-gray-500">{(file.size / 1024).toFixed(1)} KB</p>
                 </div>
-                <button onClick={() => setFile(null)} className="p-1.5 text-gray-400 hover:text-red-500 rounded">
+                <button onClick={() => { setFile(null); onFileChange?.(null); }} className="p-1.5 text-gray-400 hover:text-red-500 rounded">
                   <X size={14} />
                 </button>
               </div>
@@ -316,6 +360,23 @@ export const AIGeneratePanel: React.FC<AIGeneratePanelProps> = ({
           </div>
         )}
       </div>
+
+      {/* CSV-based login credentials toggle */}
+      <label className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 bg-gray-50 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={useCsvCredentials}
+          onChange={e => setUseCsvCredentials(e.target.checked)}
+          className="mt-0.5 accent-purple-500"
+        />
+        <span>
+          <span className="block text-sm font-medium text-gray-700">Use CSV-based login credentials</span>
+          <span className="block text-xs text-gray-500 mt-0.5">
+            Generates the script to pull a per-VU pool of login URL/username/password from the
+            credentials CSV uploaded above, instead of a single shared login.
+          </span>
+        </span>
+      </label>
 
       {/* Mandatory-fields notice */}
       {disabled && disabledReason && (

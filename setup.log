@@ -530,3 +530,129 @@ Coralogix (optional) not configured
 INFO  Chocolatey already installed.
 INFO  Node.js v20.19.0 already installed.
 INFO  PostgreSQL already installed.
+=== PTaaS setup run: 07/21/2026 02:58:45 ===
+
+Component            Status        
+---------            ------        
+PostgreSQL           OK            
+InfluxDB             OK            
+InfluxDB token       OK            
+Grafana              OK            
+GRAFANA_URL          OK            
+k6 binary            OK            
+npm dependencies     OK            
+backend\.env         OK            
+Database schema      OK            
+Backend (if running) UP            
+Grafana API key      FAIL          
+Grafana dashboard    FAIL          
+Agent registration   OK            
+Coralogix (optional) not configured
+
+
+
+=== PTaaS setup run: 07/21/2026 03:13:50 ===
+
+Component            Status        
+---------            ------        
+PostgreSQL           OK            
+InfluxDB             OK            
+InfluxDB token       OK            
+Grafana              OK            
+GRAFANA_URL          OK            
+k6 binary            OK            
+npm dependencies     OK            
+backend\.env         OK            
+Database schema      OK            
+Backend (if running) UP            
+Grafana API key      FAIL          
+Grafana dashboard    FAIL          
+Agent registration   OK            
+Coralogix (optional) not configured
+
+
+
+=== PTaaS setup run: 07/21/2026 03:52:04 ===
+
+Component            Status        
+---------            ------        
+PostgreSQL           OK            
+InfluxDB             OK            
+InfluxDB token       OK            
+Grafana              OK            
+GRAFANA_URL          OK            
+k6 binary            OK            
+npm dependencies     OK            
+backend\.env         OK            
+Database schema      OK            
+Backend (if running) UP            
+Grafana API key      FAIL          
+Grafana dashboard    FAIL          
+Agent registration   OK            
+Coralogix (optional) not configured
+
+
+
+=== PTaaS setup run: 07/21/2026 03:53:12 ===
+
+Component            Status        
+---------            ------        
+PostgreSQL           OK            
+InfluxDB             OK            
+InfluxDB token       OK            
+Grafana              OK            
+GRAFANA_URL          OK            
+k6 binary            OK            
+npm dependencies     OK            
+backend\.env         OK            
+Database schema      OK            
+Backend (if running) UP            
+Grafana API key      FAIL          
+Grafana dashboard    FAIL          
+Agent registration   OK            
+Coralogix (optional) not configured
+
+
+
+=== PTaaS setup run: 07/21/2026 04:57:36 ===
+
+Component            Status        
+---------            ------        
+PostgreSQL           OK            
+InfluxDB             OK            
+InfluxDB token       OK            
+Grafana              OK            
+GRAFANA_URL          OK            
+k6 binary            OK            
+npm dependencies     OK            
+backend\.env         OK            
+Database schema      OK            
+Backend (if running) UP            
+Grafana API key      FAIL          
+Grafana dashboard    FAIL          
+Agent registration   OK            
+Coralogix (optional) not configured
+
+
+
+=== PTaaS setup run: 07/21/2026 04:58:20 ===
+
+Component            Status        
+---------            ------        
+PostgreSQL           OK            
+InfluxDB             OK            
+InfluxDB token       OK            
+Grafana              OK            
+GRAFANA_URL          OK            
+k6 binary            OK            
+npm dependencies     OK            
+backend\.env         OK            
+Database schema      OK            
+Backend (if running) UP            
+Grafana API key      FAIL          
+Grafana dashboard    FAIL          
+Agent registration   OK            
+Coralogix (optional) not configured
+
+
+

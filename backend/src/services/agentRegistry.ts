@@ -25,6 +25,15 @@ class AgentRegistry {
     return undefined;
   }
 
+  // Unlike getAvailable(), this doesn't care whether our bookkeeping still
+  // thinks the agent is 'busy' — used for redispatching to the specific agent
+  // that already finished a job (e.g. an auto-fix retry), where the busy flag
+  // hasn't been flipped back yet but the agent is in fact free.
+  isConnected(agentId: string): boolean {
+    const conn = this.connections.get(agentId);
+    return !!conn && conn.ws.readyState === WebSocket.OPEN;
+  }
+
   setStatus(agentId: string, status: 'online' | 'busy'): void {
     const conn = this.connections.get(agentId);
     if (conn) {

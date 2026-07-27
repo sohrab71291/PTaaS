@@ -15,16 +15,12 @@ function buildInfluxEnvVars(): Record<string, string> {
   return vars;
 }
 
-export async function dispatchJob(
+async function sendToAgent(
+  agentId: string,
   executionId: string,
   script: string,
-  config: Record<string, any>
+  config: Record<string, any>,
 ): Promise<string> {
-  const agent = agentRegistry.getAvailable();
-  if (!agent) {
-    throw new Error('No execution agents are online. Start an agent to run tests.');
-  }
-
   // Generate the run identity once here so the timestamp is shared between
   // startedAt (stored in DB) and RUN_ID (passed to k6 / InfluxDB).
   // This lets queryFromRequestsRaw reconstruct the runId from startedAt
@@ -36,12 +32,12 @@ export async function dispatchJob(
     where: { id: executionId },
     data: {
       status: 'running',
-      agentId: agent.agentId,
+      agentId,
       startedAt,
     },
   });
 
-  agentRegistry.setStatus(agent.agentId, 'busy');
+  agentRegistry.setStatus(agentId, 'busy');
 
   const enrichedConfig = {
     ...config,
@@ -53,7 +49,7 @@ export async function dispatchJob(
     },
   };
 
-  const dispatched = agentRegistry.dispatch(agent.agentId, {
+  const dispatched = agentRegistry.dispatch(agentId, {
     type: 'dispatch_job',
     executionId,
     script,
@@ -61,9 +57,40 @@ export async function dispatchJob(
   });
 
   if (!dispatched) {
-    agentRegistry.setStatus(agent.agentId, 'online');
+    agentRegistry.setStatus(agentId, 'online');
     throw new Error('Failed to dispatch job to agent — connection may have dropped');
   }
 
-  return agent.agentId;
+  return agentId;
+}
+
+export async function dispatchJob(
+  executionId: string,
+  script: string,
+  config: Record<string, any>
+): Promise<string> {
+  const agent = agentRegistry.getAvailable();
+  if (!agent) {
+    throw new Error('No execution agents are online. Start an agent to run tests.');
+  }
+  return sendToAgent(agent.agentId, executionId, script, config);
+}
+
+// Redispatch to the SAME agent that just finished a job — used by the
+// auto-fix/retry loop. getAvailable()/dispatchJob won't work here: the agent
+// that finished this job is still marked 'busy' in our bookkeeping (only
+// flipped back to 'online' once the retry/finalize path completes), even
+// though it's actually free. isConnected() checks the socket instead of that
+// stale status flag. Falls back to picking any other available agent if the
+// original one has disconnected since.
+export async function dispatchJobToAgent(
+  agentId: string,
+  executionId: string,
+  script: string,
+  config: Record<string, any>,
+): Promise<string> {
+  if (!agentRegistry.isConnected(agentId)) {
+    return dispatchJob(executionId, script, config);
+  }
+  return sendToAgent(agentId, executionId, script, config);
 }

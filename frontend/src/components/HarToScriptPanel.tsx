@@ -4,7 +4,7 @@ import {
   Upload, X, FileText, AlertCircle, CheckCircle,
   Loader2, Send, Copy, ChevronDown, ChevronUp, Globe, RotateCcw,
 } from 'lucide-react';
-import { StreamingCodeDisplay } from './AIGeneratePanel';
+import { StreamingCodeDisplay, StoredFile } from './AIGeneratePanel';
 
 interface ParsedRequest {
   name: string;
@@ -36,6 +36,28 @@ interface HarToScriptPanelProps {
   disabled?: boolean;
   disabledReason?: string;
   embedded?: boolean;
+  credentialBatchId?: string | null;
+  // Restores previously-uploaded HAR/JSON files (persisted with the test
+  // suite) so editing a saved suite doesn't force a re-upload.
+  initialFiles?: StoredFile[];
+  // Fired whenever the active file set changes so the parent can persist it.
+  onFilesChange?: (files: StoredFile[]) => void;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',').pop() || '');
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function base64ToFile(stored: StoredFile): File {
+  const bytes = atob(stored.content);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new File([arr], stored.name, { type: stored.mimeType });
 }
 
 export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
@@ -44,8 +66,22 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
   disabled,
   disabledReason,
   embedded,
+  credentialBatchId,
+  initialFiles,
+  onFilesChange,
 }) => {
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<File[]>(
+    () => (initialFiles ?? []).map(base64ToFile)
+  );
+
+  const syncFiles = useCallback((next: File[]) => {
+    setFiles(next);
+    if (onFilesChange) {
+      Promise.all(next.map(async f => ({ name: f.name, content: await fileToBase64(f), mimeType: f.type || 'application/octet-stream' })))
+        .then(onFilesChange);
+    }
+  }, [onFilesChange]);
+  const [useCsvCredentials, setUseCsvCredentials] = useState(false);
   const [status, setStatus] = useState<'idle' | 'generating' | 'complete' | 'error'>('idle');
   const [statusMessage, setStatusMessage] = useState('');
   const [streamingScript, setStreamingScript] = useState('');
@@ -57,15 +93,13 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
   const abortRef = useRef<AbortController | null>(null);
 
   const onDrop = useCallback((accepted: File[]) => {
-    setFiles(prev => {
-      const existing = new Set(prev.map(f => f.name));
-      const fresh = accepted.filter(f => !existing.has(f.name));
-      return [...prev, ...fresh];
-    });
+    const existing = new Set(files.map(f => f.name));
+    const fresh = accepted.filter(f => !existing.has(f.name));
+    syncFiles([...files, ...fresh]);
     setResult(null);
     setError('');
     setStatus('idle');
-  }, []);
+  }, [files, syncFiles]);
 
   const onDropRejected = useCallback((rejections: FileRejection[]) => {
     const tooLarge = rejections.find(r => r.errors.some(e => e.code === 'file-too-large'));
@@ -88,7 +122,7 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
   });
 
   const removeFile = (name: string) => {
-    setFiles(prev => prev.filter(f => f.name !== name));
+    syncFiles(files.filter(f => f.name !== name));
     setResult(null);
     setStatus('idle');
   };
@@ -109,6 +143,10 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
     const formData = new FormData();
     for (const f of files) formData.append('files', f);
     if (loadProfile) formData.append('loadProfile', JSON.stringify(loadProfile));
+    if (useCsvCredentials) {
+      formData.append('useCsvCredentials', 'true');
+      if (credentialBatchId) formData.append('credentialBatchId', credentialBatchId);
+    }
 
     try {
       const token = localStorage.getItem('auth_token');
@@ -196,7 +234,7 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
   };
 
   const handleReset = () => {
-    setFiles([]);
+    syncFiles([]);
     setStreamingScript('');
     setFinalScript('');
     setResult(null);
@@ -283,6 +321,23 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
           </div>
         )}
       </div>
+
+      {/* CSV-based login credentials toggle */}
+      <label className="flex items-start gap-3 p-3 rounded-xl border border-gray-200 bg-gray-50 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={useCsvCredentials}
+          onChange={e => setUseCsvCredentials(e.target.checked)}
+          className="mt-0.5 accent-teal-500"
+        />
+        <span>
+          <span className="block text-sm font-medium text-gray-700">Use CSV-based login credentials</span>
+          <span className="block text-xs text-gray-500 mt-0.5">
+            Generates the script to pull a per-VU pool of login URL/username/password from the
+            credentials CSV uploaded above, instead of a single shared login.
+          </span>
+        </span>
+      </label>
 
       {/* Validation warning */}
       {disabled && disabledReason && (

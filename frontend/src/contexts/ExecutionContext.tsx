@@ -59,6 +59,9 @@ export interface StartExecutionParams {
   testName: string;
   slos: any[];
   specId?: string | null;
+  credentialBatchId?: string | null;
+  autoFix?: boolean;
+  maxAttempts?: number;
 }
 
 interface ExecutionContextValue {
@@ -73,6 +76,9 @@ interface ExecutionContextValue {
   k6NotFound: boolean;
   sloResults: SloResults | null;
   stages: StageMap;
+  autoFixAttempt: number;
+  autoFixMaxAttempts: number;
+  autoFixedScript: string | null;
   startExecution: (params: StartExecutionParams) => Promise<void>;
   stopExecution: () => Promise<void>;
 }
@@ -101,6 +107,9 @@ export function ExecutionProvider({ children }: { children: React.ReactNode }) {
   const [summary, setSummary] = useState<SummaryData | null>(null);
   const [k6NotFound, setK6NotFound] = useState(false);
   const [sloResults, setSloResults] = useState<SloResults | null>(null);
+  const [autoFixAttempt, setAutoFixAttempt] = useState(1);
+  const [autoFixMaxAttempts, setAutoFixMaxAttempts] = useState(1);
+  const [autoFixedScript, setAutoFixedScript] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -162,6 +171,20 @@ export function ExecutionProvider({ children }: { children: React.ReactNode }) {
         }
         return next;
       });
+    } else if (msg.type === 'retry') {
+      // Backend auto-fix: the script just failed, Claude rewrote it, and the
+      // same executionId was redispatched — stay in 'running' and keep this
+      // same WebSocket open for the next attempt's log/metric stream.
+      const { attempt, maxAttempts, fixedScript } = msg.data as { attempt: number; maxAttempts: number; fixedScript?: string };
+      setAutoFixAttempt(attempt);
+      setAutoFixMaxAttempts(maxAttempts);
+      if (fixedScript) setAutoFixedScript(fixedScript);
+      setStatus('running');
+      setSummary(null);
+      setSloResults(null);
+      setLiveMetrics(emptyLiveMetrics);
+      setStages(prev => ({ ...prev, script_execution: 'in_progress', postgres: 'pending', influx: 'pending', grafana: 'pending' }));
+      addConsoleLine(`[PerfOps] ↻ Retrying with auto-fixed script (attempt ${attempt}/${maxAttempts})…`);
     } else if (msg.type === 'complete') {
       setStatus('complete');
       addConsoleLine(`[PerfOps] Execution complete. Exit code: ${msg.data.exitCode}`);
@@ -223,6 +246,9 @@ export function ExecutionProvider({ children }: { children: React.ReactNode }) {
     setK6NotFound(false);
     setSloResults(null);
     setConsoleLines([]);
+    setAutoFixAttempt(1);
+    setAutoFixMaxAttempts(params.autoFix ? Math.max(params.maxAttempts ?? 3, 2) : 1);
+    setAutoFixedScript(null);
     setLiveMetrics(emptyLiveMetrics);
     setSystemMetrics(emptySystemMetrics);
     setStages({ ...idleStages(), script_generation: 'done', script_execution: 'in_progress' });
@@ -242,6 +268,11 @@ export function ExecutionProvider({ children }: { children: React.ReactNode }) {
       }
       if (params.testName.trim()) body.append('testName', params.testName.trim());
       if (params.slos.length)     body.append('slos', JSON.stringify(params.slos));
+      if (params.credentialBatchId) body.append('credentialBatchId', params.credentialBatchId);
+      if (params.autoFix) {
+        body.append('autoFix', 'true');
+        body.append('maxAttempts', String(params.maxAttempts ?? 3));
+      }
 
       const token = localStorage.getItem('auth_token');
       const res = await fetch('/api/executor/run', {
@@ -329,6 +360,7 @@ export function ExecutionProvider({ children }: { children: React.ReactNode }) {
   return (
     <ExecutionContext.Provider value={{
       status, executionId, specId, testName, liveMetrics, systemMetrics, consoleLines, summary, k6NotFound, sloResults, stages,
+      autoFixAttempt, autoFixMaxAttempts, autoFixedScript,
       startExecution, stopExecution,
     }}>
       {children}

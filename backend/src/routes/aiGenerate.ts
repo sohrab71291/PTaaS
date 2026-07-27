@@ -7,11 +7,17 @@ import {
   getAnthropicClient, hasAnthropicCredentials, isOverloadedError,
   CLAUDE_MODEL, MAX_STREAM_ATTEMPTS, STREAM_BACKOFF_MS, stripCodeFences,
 } from '../services/anthropicClient';
-import { buildInfluxAndAuthBlock, DATA_PLACEHOLDER, injectCapturedData, extractCapturedData } from '../services/k6PromptBlocks';
+import {
+  buildInfluxBlock, buildGenericAuthPatternBlock, buildCsvCredentialAuthPatternBlock, HANDLE_SUMMARY_BLOCK,
+  buildModuleRecordAccessPatternBlock,
+  DATA_PLACEHOLDER, injectCapturedData, extractCapturedData, injectCredentials,
+  extractCredentials, injectCredentialsBlock,
+} from '../services/k6PromptBlocks';
+import { fetchScriptCredentials } from '../services/credentialStore';
 import { isBraceBalanced } from '../services/k6ScriptValidator';
 
 const router = Router();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 
 // Parse uploaded file into readable text content
 function parseFileToText(buffer: Buffer, originalname: string): string {
@@ -148,6 +154,8 @@ function buildSystemPrompt(
   envVarKeys: string[],
   baseUrl: string | null,
   specContext: SpecContext | null,
+  useCsvCredentials: boolean,
+  hasModuleRecordAccessCall: boolean,
 ): string {
   return `You are an expert performance engineer specializing in k6 load testing with InfluxDB v2 integration. Analyze the provided test case data and generate a complete, production-ready k6 JavaScript script.
 
@@ -165,16 +173,22 @@ MANDATORY RULES — every rule must be followed exactly:
 7. Every endpoint has its own Trend metric (e.g. loginTrend, createOrderTrend).
 8. Every request has check() for status code AND response time.
 9. Include sleep(1) between logical steps within an iteration.
-10. Use options.scenarios with ramping-vus executor and explicit exec function names.
+10. Declare 'export const options = { scenarios: {...}, thresholds: {...} };' EXACTLY ONCE, using 'const' (never 'let'/'var') — a script with more than one export named 'options' fails to load entirely with "Duplicate export name 'options'" before any request runs. Use options.scenarios with ramping-vus executor and explicit exec function names, and put thresholds in that SAME object literal — never a second options block later.
 11. Set thresholds from test case data or sensible defaults (p(95)<800, rate<0.05).
 12. SCENARIO_MAX_VUS must be computed with Math.max and ?? (not ||): const SCENARIO_MAX_VUS = Math.max(...Object.values(options.scenarios).flatMap(s => (s.stages||[]).map(st => st.target ?? 0)), 1);
 13. Auth tokens: extract defensively — const token = (body.token ?? body.sessionToken ?? body.access_token ?? (body.data && body.data.token) ?? '');
 14. All test data that must be unique per VU/iteration (names, emails, usernames) must embed __VU and __ITER: e.g. 'user_' + __VU + '_' + __ITER + '@example.com'.
 15. Use ?? instead of || when the right-hand side is a fallback for null/undefined (stage.target ?? 0, not stage.target || 0).
 16. handleSummary must output ONLY stdout — do NOT write any file (no summary.json).
-17. If the test cases require authentication (a login/token endpoint), perform the login ONCE in setup() — never per-VU or per-iteration — and pass the resulting session token to exec functions via setup()'s return value. See AUTHENTICATION PATTERN below; this is mandatory whenever a login step exists, to avoid concurrent-login failures under load.
+17. ${useCsvCredentials
+    ? 'Login credentials come from an uploaded CSV pool (one login per VU) — see the CSV-BASED PER-VU CREDENTIALS pattern below. This is MANDATORY: do not write a shared setup() login for this script; every VU must authenticate independently via ensureAuth(), and the getVuCredential()/ensureAuth() helper functions from that pattern must be reproduced verbatim, including the REQUIRED InstanceName field in the login payload — do not simplify, rename, or omit it.'
+    : 'If the test cases require authentication (a login/token endpoint), perform the login ONCE in setup() — never per-VU or per-iteration — and pass the resulting session token to exec functions via setup()\'s return value. See AUTHENTICATION PATTERN below; this is mandatory whenever a login step exists, to avoid concurrent-login failures under load.'}
+${hasModuleRecordAccessCall ? `18. GetModuleRecordAccess CSRF PROPAGATION IS MANDATORY — the .../api/internal/Permission/GetModuleRecordAccess call's response carries a 'csrf-token' response header. Capture that exact header value into a variable right after that call, and send it as the 'x-csrf-token' request header on every authenticated call made AFTER it (not on GetModuleRecordAccess itself, and not a hardcoded/captured literal). See the GetModuleRecordAccess HEADER PATTERN block below for the required header shape on the call itself and the exact capture/propagation code.` : ''}
 
-${buildInfluxAndAuthBlock(baseUrl)}
+${buildInfluxBlock(baseUrl)}
+${useCsvCredentials ? buildCsvCredentialAuthPatternBlock() : buildGenericAuthPatternBlock()}
+${hasModuleRecordAccessCall ? buildModuleRecordAccessPatternBlock() : ''}
+${HANDLE_SUMMARY_BLOCK}
 ════════════════════════════════════════════════════════════════
 
 TEST TYPE LOAD SHAPES (fallback only — ignore this section if a MANDATORY LOAD PROFILE was given above; that one wins):
@@ -195,7 +209,7 @@ Generate the k6 script now. Output ONLY JavaScript, starting with the first impo
 
 // POST /api/ai-generate — streaming SSE endpoint
 router.post('/ai-generate', upload.single('file'), async (req: Request, res: Response) => {
-  const { testType, complexity, pastedContent, loadProfile: loadProfileRaw, envVarKeys: envVarKeysRaw, specContext: specContextRaw } = req.body;
+  const { testType, complexity, pastedContent, loadProfile: loadProfileRaw, envVarKeys: envVarKeysRaw, specContext: specContextRaw, useCsvCredentials: useCsvCredentialsRaw, credentialBatchId } = req.body;
 
   let loadProfile: LoadProfileConfig | null = null;
   try { loadProfile = loadProfileRaw ? JSON.parse(loadProfileRaw) : null; } catch {}
@@ -203,6 +217,24 @@ router.post('/ai-generate', upload.single('file'), async (req: Request, res: Res
   try { envVarKeys = envVarKeysRaw ? JSON.parse(envVarKeysRaw) : []; } catch {}
   let specContext: SpecContext | null = null;
   try { specContext = specContextRaw ? JSON.parse(specContextRaw) : null; } catch {}
+  const useCsvCredentials = useCsvCredentialsRaw === true || useCsvCredentialsRaw === 'true';
+
+  let csvCredentials: Awaited<ReturnType<typeof fetchScriptCredentials>> = [];
+  if (useCsvCredentials) {
+    if (typeof credentialBatchId !== 'string' || !credentialBatchId.trim()) {
+      res.status(422).json({
+        error: 'CSV-based credentials were requested but no credential batch was uploaded. Upload a login credentials CSV before generating the script.',
+      });
+      return;
+    }
+    csvCredentials = await fetchScriptCredentials(credentialBatchId);
+    if (csvCredentials.length === 0) {
+      res.status(422).json({
+        error: 'The uploaded credentials CSV/batch resolved to zero usable rows (check that it has URL, Username, Password, and InstanceName columns). Re-upload a valid credentials file.',
+      });
+      return;
+    }
+  }
 
   if (!hasAnthropicCredentials()) {
     res.status(500).json({
@@ -230,6 +262,8 @@ router.post('/ai-generate', upload.single('file'), async (req: Request, res: Res
   }
 
   const detectedBaseUrl = detectBaseUrl(fileContent) ?? detectBaseUrl(specContext?.request?.url ?? '');
+  const hasModuleRecordAccessCall = /GetModuleRecordAccess/i.test(fileContent)
+    || /GetModuleRecordAccess/i.test(specContext?.request?.url ?? '');
   const userMessage = `Here are the test cases to analyze and convert into a k6 performance test script:\n\n\`\`\`\n${fileContent}\n\`\`\`\n\nGenerate a ${testType} k6 script at ${complexity} complexity level based on these test cases. Output ONLY the JavaScript code.`;
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -250,8 +284,8 @@ router.post('/ai-generate', upload.single('file'), async (req: Request, res: Res
       try {
         stream = await getAnthropicClient().messages.stream({
           model: CLAUDE_MODEL,
-          max_tokens: 8096,
-          system: buildSystemPrompt(testType || 'Load Test', complexity || 'Standard', loadProfile, envVarKeys, detectedBaseUrl, specContext),
+          max_tokens: 16000,
+          system: buildSystemPrompt(testType || 'Load Test', complexity || 'Standard', loadProfile, envVarKeys, detectedBaseUrl, specContext, useCsvCredentials, hasModuleRecordAccessCall),
           messages: [{ role: 'user', content: userMessage }],
         });
         break;
@@ -275,6 +309,13 @@ router.post('/ai-generate', upload.single('file'), async (req: Request, res: Res
       }
     }
     fullScript = stripCodeFences(fullScript);
+
+    // Bake the real uploaded CSV rows into the script now, rather than leaving
+    // the CREDENTIALS placeholder for execution time — the credentials are
+    // part of the generated script, not something spliced in later.
+    if (useCsvCredentials && csvCredentials.length > 0) {
+      fullScript = injectCredentials(fullScript, csvCredentials);
+    }
 
     sendEvent('complete', { script: fullScript });
     res.end();
@@ -319,7 +360,7 @@ async function streamRefinement(
     try {
       stream = await getAnthropicClient().messages.stream({
         model: CLAUDE_MODEL,
-        max_tokens: 8096,
+        max_tokens: 16000,
         system: buildRefineSystemPrompt(hasCapturedData),
         messages: [{ role: 'user', content: userMessage }],
       });
@@ -346,6 +387,39 @@ async function streamRefinement(
   return stripCodeFences(fullScript);
 }
 
+// Non-streaming variant of the refine flow, callable server-side (e.g. by the
+// executor's auto-fix/retry loop in index.ts) rather than only from an SSE
+// route driven by a browser. Reuses the exact same strip/refine/re-inject/
+// brace-check pipeline as POST /api/ai-refine.
+export async function autoFixScript(
+  currentScript: string,
+  instruction: string,
+  onEvent?: (type: string, data: any) => void,
+): Promise<string> {
+  const extracted = extractCapturedData(currentScript);
+  const scriptAfterCapturedStrip = extracted ? extracted.strippedScript : currentScript;
+  const extractedCreds = extractCredentials(scriptAfterCapturedStrip);
+  const scriptForPrompt = extractedCreds ? extractedCreds.strippedScript : scriptAfterCapturedStrip;
+  const emit = onEvent ?? (() => {});
+
+  const reinject = (script: string) => {
+    let out = script;
+    if (extracted) out = injectCapturedData(out, extracted.dataBlock);
+    if (extractedCreds) out = injectCredentialsBlock(out, extractedCreds.dataBlock);
+    return out;
+  };
+
+  let fullScript = reinject(await streamRefinement(scriptForPrompt, instruction, !!extracted, emit));
+  if (!isBraceBalanced(fullScript)) {
+    emit('status', { message: 'Generated fix failed a structural check — retrying once…' });
+    fullScript = reinject(await streamRefinement(scriptForPrompt, instruction, !!extracted, emit));
+    if (!isBraceBalanced(fullScript)) {
+      throw new Error('Auto-fix produced a script with mismatched braces twice in a row.');
+    }
+  }
+  return fullScript;
+}
+
 // POST /api/ai-refine — streaming SSE endpoint for iterative script tweaks
 router.post('/ai-refine', async (req: Request, res: Response) => {
   const { currentScript, prompt } = req.body;
@@ -369,7 +443,13 @@ router.post('/ai-refine', async (req: Request, res: Response) => {
   // for the full rationale). Strip them out and splice the real data back in
   // after refinement, exactly like /api/har-generate does for initial generation.
   const extracted = extractCapturedData(currentScript);
-  const scriptForPrompt = extracted ? extracted.strippedScript : currentScript;
+  const scriptAfterCapturedStrip = extracted ? extracted.strippedScript : currentScript;
+
+  // Same reasoning as above, but for the CSV-based CREDENTIALS pool — strip it
+  // before prompting so Claude never sees/retypes real login credentials, and
+  // splice the original rows back in afterward untouched.
+  const extractedCreds = extractCredentials(scriptAfterCapturedStrip);
+  const scriptForPrompt = extractedCreds ? extractedCreds.strippedScript : scriptAfterCapturedStrip;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -388,11 +468,13 @@ router.post('/ai-refine', async (req: Request, res: Response) => {
 
     let fullScript = await streamRefinement(scriptForPrompt, prompt, !!extracted, sendEvent);
     if (extracted) fullScript = injectCapturedData(fullScript, extracted.dataBlock);
+    if (extractedCreds) fullScript = injectCredentialsBlock(fullScript, extractedCreds.dataBlock);
 
     if (!isBraceBalanced(fullScript)) {
       sendEvent('status', { message: 'Generated script failed a structural check — retrying once…' });
       fullScript = await streamRefinement(scriptForPrompt, prompt, !!extracted, sendEvent);
       if (extracted) fullScript = injectCapturedData(fullScript, extracted.dataBlock);
+      if (extractedCreds) fullScript = injectCredentialsBlock(fullScript, extractedCreds.dataBlock);
 
       if (!isBraceBalanced(fullScript)) {
         sendEvent('error', { message: 'Claude produced a script with mismatched braces twice in a row. Please try again — if this keeps happening, try a smaller or more specific change.' });

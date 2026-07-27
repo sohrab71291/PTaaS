@@ -1,0 +1,653 @@
+{
+    "metrics": {
+        "http_req_blocked": {
+            "avg": 2.1248389830508474,
+            "min": 0,
+            "med": 0,
+            "max": 125.3655,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "k6_http_reqs_total": {
+            "count": 50,
+            "rate": 0.7043605427101925
+        },
+        "http_req_duration": {
+            "p(90)": 834.5110800000006,
+            "p(95)": 1052.2682999999993,
+            "avg": 352.27023050847447,
+            "min": 5.1923,
+            "med": 247.4284,
+            "max": 1272.3359,
+            "thresholds": {
+                "p(95)<1000": true
+            }
+        },
+        "k6_vus": {
+            "max": 1,
+            "value": 1,
+            "min": 1
+        },
+        "http_req_sending": {
+            "p(95)": 0.5423399999999998,
+            "avg": 0.2944864406779661,
+            "min": 0,
+            "med": 0.4329,
+            "max": 0.6196,
+            "p(90)": 0.51158
+        },
+        "k6_vus_max": {
+            "min": 1,
+            "max": 1,
+            "value": 1
+        },
+        "checks": {
+            "passes": 100,
+            "fails": 0,
+            "value": 1
+        },
+        "k6_data_sent_bytes_total": {
+            "count": 12396,
+            "rate": 174.62506574871094
+        },
+        "http_reqs": {
+            "count": 59,
+            "rate": 0.8311454403980272
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 442.2926222222221,
+            "min": 59.8083,
+            "med": 321.9632,
+            "max": 1272.3359,
+            "p(90)": 996.85364,
+            "p(95)": 1136.4957999999997
+        },
+        "vus_max": {
+            "value": 1,
+            "min": 1,
+            "max": 1
+        },
+        "http_req_failed": {
+            "passes": 14,
+            "fails": 45,
+            "thresholds": {
+                "rate<0.8": false
+            },
+            "value": 0.23728813559322035
+        },
+        "k6_iterations_total": {
+            "count": 2,
+            "rate": 0.028174421708407702
+        },
+        "data_received": {
+            "count": 64120,
+            "rate": 903.2719599715509
+        },
+        "http_req_waiting": {
+            "med": 246.905,
+            "max": 1271.9057,
+            "p(90)": 834.0423400000005,
+            "p(95)": 1051.1993699999994,
+            "avg": 351.76197288135586,
+            "min": 5.1923
+        },
+        "group_duration": {
+            "p(90)": 1010.1074000000001,
+            "p(95)": 1183.5093299999999,
+            "avg": 419.29187599999983,
+            "min": 34.7391,
+            "med": 298.75725,
+            "max": 1272.8338
+        },
+        "data_sent": {
+            "count": 45800,
+            "rate": 645.1942571225364
+        },
+        "http_req_receiving": {
+            "min": 0,
+            "med": 0,
+            "max": 6.1188,
+            "p(90)": 0.52062,
+            "p(95)": 0.7279299999999995,
+            "avg": 0.21377118644067794
+        },
+        "k6_http_req_duration_seconds": {
+            "med": 0.25038105,
+            "max": 1.2723359,
+            "p(90)": 0.98518444,
+            "p(95)": 1.1064145499999996,
+            "avg": 0.36921467799999985,
+            "min": 0.0051923
+        },
+        "vus": {
+            "value": 1,
+            "min": 1,
+            "max": 1
+        },
+        "k6_data_received_bytes_total": {
+            "count": 90634,
+            "rate": 1276.7802685599117
+        },
+        "http_req_tls_handshaking": {
+            "avg": 0.07019491525423728,
+            "min": 0,
+            "med": 0,
+            "max": 4.1415,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "iteration_duration": {
+            "avg": 35491.79385,
+            "min": 34749.8517,
+            "med": 35491.79385,
+            "max": 36233.736,
+            "p(90)": 36085.34757,
+            "p(95)": 36159.541784999994
+        },
+        "http_req_connecting": {
+            "p(95)": 0,
+            "avg": 0.018259322033898302,
+            "min": 0,
+            "med": 0,
+            "max": 1.0773,
+            "p(90)": 0
+        },
+        "iterations": {
+            "count": 2,
+            "rate": 0.028174421708407702
+        }
+    },
+    "setup_data": null,
+    "root_group": {
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "GET _ngrx_record_v1_modules_10162_levels": {
+                "checks": {
+                    "GET _ngrx_record_v1_modules_10162_levels status is 200": {
+                        "passes": 2,
+                        "fails": 0,
+                        "name": "GET _ngrx_record_v1_modules_10162_levels status is 200",
+                        "path": "::GET _ngrx_record_v1_modules_10162_levels::GET _ngrx_record_v1_modules_10162_levels status is 200",
+                        "id": "3e4ed2458415e4b35b27776d3c7c9467"
+                    },
+                    "GET _ngrx_record_v1_modules_10162_levels response time < 3500ms": {
+                        "path": "::GET _ngrx_record_v1_modules_10162_levels::GET _ngrx_record_v1_modules_10162_levels response time < 3500ms",
+                        "id": "e13bf6e64752c4af57c2b65115c253e8",
+                        "passes": 2,
+                        "fails": 0,
+                        "name": "GET _ngrx_record_v1_modules_10162_levels response time < 3500ms"
+                    }
+                },
+                "name": "GET _ngrx_record_v1_modules_10162_levels",
+                "path": "::GET _ngrx_record_v1_modules_10162_levels",
+                "id": "f7b9630dc95036035fab854110c9472a",
+                "groups": {}
+            },
+            "POST _api_V2_internal_ConsumerGroups": {
+                "name": "POST _api_V2_internal_ConsumerGroups",
+                "path": "::POST _api_V2_internal_ConsumerGroups",
+                "id": "14881088a645aee6702f71a1d20f2ba2",
+                "groups": {},
+                "checks": {
+                        "POST _api_V2_internal_ConsumerGroups status is 200": {
+                            "name": "POST _api_V2_internal_ConsumerGroups status is 200",
+                            "path": "::POST _api_V2_internal_ConsumerGroups::POST _api_V2_internal_ConsumerGroups status is 200",
+                            "id": "e56a97f64a351b1e57443b56c546e933",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "POST _api_V2_internal_ConsumerGroups response time < 3500ms": {
+                            "path": "::POST _api_V2_internal_ConsumerGroups::POST _api_V2_internal_ConsumerGroups response time < 3500ms",
+                            "id": "021da0ebee1d3341c6e24b4d6f8a59c3",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "POST _api_V2_internal_ConsumerGroups response time < 3500ms"
+                        }
+                    }
+            },
+            "GET _ngrx_profile_User_7478_additionalInfo": {
+                "path": "::GET _ngrx_profile_User_7478_additionalInfo",
+                "id": "624473b46294d3f4c4f3133ede86d243",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_profile_User_7478_additionalInfo status is 200": {
+                            "name": "GET _ngrx_profile_User_7478_additionalInfo status is 200",
+                            "path": "::GET _ngrx_profile_User_7478_additionalInfo::GET _ngrx_profile_User_7478_additionalInfo status is 200",
+                            "id": "9f1aed0fa5d96dffb2cdded640770b89",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_profile_User_7478_additionalInfo response time < 3500ms": {
+                            "fails": 0,
+                            "name": "GET _ngrx_profile_User_7478_additionalInfo response time < 3500ms",
+                            "path": "::GET _ngrx_profile_User_7478_additionalInfo::GET _ngrx_profile_User_7478_additionalInfo response time < 3500ms",
+                            "id": "c77f7c6349eee44fceb37a122619acd0",
+                            "passes": 2
+                        }
+                    },
+                "name": "GET _ngrx_profile_User_7478_additionalInfo"
+            },
+            "GET _ngrx_record_v1_levels_12126_data_driven_events": {
+                "name": "GET _ngrx_record_v1_levels_12126_data_driven_events",
+                "path": "::GET _ngrx_record_v1_levels_12126_data_driven_events",
+                "id": "aea9e0f78cde66f6d02a4180dd797053",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_levels_12126_data_driven_events status is 200": {
+                            "name": "GET _ngrx_record_v1_levels_12126_data_driven_events status is 200",
+                            "path": "::GET _ngrx_record_v1_levels_12126_data_driven_events::GET _ngrx_record_v1_levels_12126_data_driven_events status is 200",
+                            "id": "34df76ba2003b4e1fc233f730b33f367",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_levels_12126_data_driven_events response time < 3500ms": {
+                            "name": "GET _ngrx_record_v1_levels_12126_data_driven_events response time < 3500ms",
+                            "path": "::GET _ngrx_record_v1_levels_12126_data_driven_events::GET _ngrx_record_v1_levels_12126_data_driven_events response time < 3500ms",
+                            "id": "689bdf9b7e085203e687440350a62470",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    }
+            },
+            "GET _ngrx_record_v1_levels_12126": {
+                "name": "GET _ngrx_record_v1_levels_12126",
+                "path": "::GET _ngrx_record_v1_levels_12126",
+                "id": "586575a44d5484cdefb366374b18e39c",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_levels_12126 status is 200": {
+                            "name": "GET _ngrx_record_v1_levels_12126 status is 200",
+                            "path": "::GET _ngrx_record_v1_levels_12126::GET _ngrx_record_v1_levels_12126 status is 200",
+                            "id": "99327d79f2ed575419729b5457773f2b",
+                            "passes": 4,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_levels_12126 response time < 3500ms": {
+                            "name": "GET _ngrx_record_v1_levels_12126 response time < 3500ms",
+                            "path": "::GET _ngrx_record_v1_levels_12126::GET _ngrx_record_v1_levels_12126 response time < 3500ms",
+                            "id": "644d983da6bcc2c04aacc629635f5430",
+                            "passes": 4,
+                            "fails": 0
+                        }
+                    }
+            },
+            "GET _ngrx_record_v1_levels_12126_advanced_workflow_configura": {
+                "name": "GET _ngrx_record_v1_levels_12126_advanced_workflow_configura",
+                "path": "::GET _ngrx_record_v1_levels_12126_advanced_workflow_configura",
+                "id": "493808a9a3539d69b76aa6d270df562b",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_levels_12126_advanced_workflow_configura status is 200": {
+                            "name": "GET _ngrx_record_v1_levels_12126_advanced_workflow_configura status is 200",
+                            "path": "::GET _ngrx_record_v1_levels_12126_advanced_workflow_configura::GET _ngrx_record_v1_levels_12126_advanced_workflow_configura status is 200",
+                            "id": "de72c1ef3b49d573d6bda13c9f2035ef",
+                            "passes": 4,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_levels_12126_advanced_workflow_configura response time < 3500ms": {
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_levels_12126_advanced_workflow_configura response time < 3500ms",
+                            "path": "::GET _ngrx_record_v1_levels_12126_advanced_workflow_configura::GET _ngrx_record_v1_levels_12126_advanced_workflow_configura response time < 3500ms",
+                            "id": "88ca60cebce52529cae8c810cb3c192a",
+                            "passes": 4
+                        }
+                    }
+            },
+            "GET _ngrx_record_v2_levels_12126_default_layout": {
+                "name": "GET _ngrx_record_v2_levels_12126_default_layout",
+                "path": "::GET _ngrx_record_v2_levels_12126_default_layout",
+                "id": "2191530f211ef3fb8d9be00de16b3c15",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v2_levels_12126_default_layout status is 200": {
+                            "path": "::GET _ngrx_record_v2_levels_12126_default_layout::GET _ngrx_record_v2_levels_12126_default_layout status is 200",
+                            "id": "d4bd8aec3beeaabdd8439f435a242e6b",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v2_levels_12126_default_layout status is 200"
+                        },
+                        "GET _ngrx_record_v2_levels_12126_default_layout response time < 3500ms": {
+                            "name": "GET _ngrx_record_v2_levels_12126_default_layout response time < 3500ms",
+                            "path": "::GET _ngrx_record_v2_levels_12126_default_layout::GET _ngrx_record_v2_levels_12126_default_layout response time < 3500ms",
+                            "id": "721fcdb939e8c58422c45e212846a01c",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    }
+            },
+            "GET _ngrx_record_v1_levels_12126_image_fields": {
+                "name": "GET _ngrx_record_v1_levels_12126_image_fields",
+                "path": "::GET _ngrx_record_v1_levels_12126_image_fields",
+                "id": "6a5e4fd3d845cb9e6a260ee9e9cc93f0",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_levels_12126_image_fields status is 200": {
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_levels_12126_image_fields status is 200",
+                            "path": "::GET _ngrx_record_v1_levels_12126_image_fields::GET _ngrx_record_v1_levels_12126_image_fields status is 200",
+                            "id": "1fb157266a94d94bb5dcb0d2b26a8fcc"
+                        },
+                        "GET _ngrx_record_v1_levels_12126_image_fields response time < 3500ms": {
+                            "name": "GET _ngrx_record_v1_levels_12126_image_fields response time < 3500ms",
+                            "path": "::GET _ngrx_record_v1_levels_12126_image_fields::GET _ngrx_record_v1_levels_12126_image_fields response time < 3500ms",
+                            "id": "10dcf5ed7932cf8e2447ffd94ca27d93",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    }
+            },
+            "POST _ngrx_record_v1_contents": {
+                "groups": {},
+                "checks": {
+                        "POST _ngrx_record_v1_contents status is 200": {
+                            "id": "eefb3c91530d0c5ba61c659052a0fab7",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "POST _ngrx_record_v1_contents status is 200",
+                            "path": "::POST _ngrx_record_v1_contents::POST _ngrx_record_v1_contents status is 200"
+                        },
+                        "POST _ngrx_record_v1_contents response time < 3500ms": {
+                            "name": "POST _ngrx_record_v1_contents response time < 3500ms",
+                            "path": "::POST _ngrx_record_v1_contents::POST _ngrx_record_v1_contents response time < 3500ms",
+                            "id": "7bb58660f5e22c3a56b253ab33d55b10",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    },
+                "name": "POST _ngrx_record_v1_contents",
+                "path": "::POST _ngrx_record_v1_contents",
+                "id": "a2306df0fe5a0454ae864db2ebadbd20"
+            },
+            "GET _ngrx_record_v2_contents_786487_summary": {
+                "path": "::GET _ngrx_record_v2_contents_786487_summary",
+                "id": "e11fb600964f6ca0070e343340d0d023",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v2_contents_786487_summary status is 200": {
+                            "name": "GET _ngrx_record_v2_contents_786487_summary status is 200",
+                            "path": "::GET _ngrx_record_v2_contents_786487_summary::GET _ngrx_record_v2_contents_786487_summary status is 200",
+                            "id": "bcc174d6c440b290a27e8fd1e37ebee3",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v2_contents_786487_summary response time < 3500ms": {
+                            "path": "::GET _ngrx_record_v2_contents_786487_summary::GET _ngrx_record_v2_contents_786487_summary response time < 3500ms",
+                            "id": "d208bc72eced0f999d0dfc4d4006f7de",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v2_contents_786487_summary response time < 3500ms"
+                        }
+                    },
+                "name": "GET _ngrx_record_v2_contents_786487_summary"
+            },
+            "GET _ngrx_record_v1_contents_786487": {
+                "name": "GET _ngrx_record_v1_contents_786487",
+                "path": "::GET _ngrx_record_v1_contents_786487",
+                "id": "ba48a5cfe4cf1b1f1e7220251d3bc3b8",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_contents_786487 status is 200": {
+                            "name": "GET _ngrx_record_v1_contents_786487 status is 200",
+                            "path": "::GET _ngrx_record_v1_contents_786487::GET _ngrx_record_v1_contents_786487 status is 200",
+                            "id": "77f36951268c074257073859956fe8a1",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_contents_786487 response time < 3500ms": {
+                            "name": "GET _ngrx_record_v1_contents_786487 response time < 3500ms",
+                            "path": "::GET _ngrx_record_v1_contents_786487::GET _ngrx_record_v1_contents_786487 response time < 3500ms",
+                            "id": "80525bf7481e8a0f2e196adcc6b385af",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    }
+            },
+            "POST _ngrx_record_v1_levels_12126_contents_786487_history": {
+                "checks": {
+                    "POST _ngrx_record_v1_levels_12126_contents_786487_history status is 200": {
+                        "passes": 2,
+                        "fails": 0,
+                        "name": "POST _ngrx_record_v1_levels_12126_contents_786487_history status is 200",
+                        "path": "::POST _ngrx_record_v1_levels_12126_contents_786487_history::POST _ngrx_record_v1_levels_12126_contents_786487_history status is 200",
+                        "id": "264a297481b0865af9b8c4b12fd94bff"
+                    },
+                    "POST _ngrx_record_v1_levels_12126_contents_786487_history response time < 3500ms": {
+                        "name": "POST _ngrx_record_v1_levels_12126_contents_786487_history response time < 3500ms",
+                        "path": "::POST _ngrx_record_v1_levels_12126_contents_786487_history::POST _ngrx_record_v1_levels_12126_contents_786487_history response time < 3500ms",
+                        "id": "7f5f707b635acc3ef7716a7b5572784b",
+                        "passes": 2,
+                        "fails": 0
+                    }
+                },
+                "name": "POST _ngrx_record_v1_levels_12126_contents_786487_history",
+                "path": "::POST _ngrx_record_v1_levels_12126_contents_786487_history",
+                "id": "cc88a1bf0e74d736d2d476791ed8cb1f",
+                "groups": {}
+            },
+            "GET _ngrx_record_v1_contents_786487_data_driven_events": {
+                "path": "::GET _ngrx_record_v1_contents_786487_data_driven_events",
+                "id": "a42bc88101c3d1f0eb6ffcbb1c4c748a",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_contents_786487_data_driven_events status is 200": {
+                            "path": "::GET _ngrx_record_v1_contents_786487_data_driven_events::GET _ngrx_record_v1_contents_786487_data_driven_events status is 200",
+                            "id": "c7529cbfc361a503f09f07e4c97f456a",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_contents_786487_data_driven_events status is 200"
+                        },
+                        "GET _ngrx_record_v1_contents_786487_data_driven_events response time < 3500ms": {
+                            "name": "GET _ngrx_record_v1_contents_786487_data_driven_events response time < 3500ms",
+                            "path": "::GET _ngrx_record_v1_contents_786487_data_driven_events::GET _ngrx_record_v1_contents_786487_data_driven_events response time < 3500ms",
+                            "id": "9a4860ad9a6fe7769008757d32fe77c8",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    },
+                "name": "GET _ngrx_record_v1_contents_786487_data_driven_events"
+            },
+            "GET _ngrx_record_v1_contents_786487_layout": {
+                "name": "GET _ngrx_record_v1_contents_786487_layout",
+                "path": "::GET _ngrx_record_v1_contents_786487_layout",
+                "id": "5a7f7fc63f6e293dfdb2d66d3c9d3bb5",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_contents_786487_layout status is 200": {
+                            "name": "GET _ngrx_record_v1_contents_786487_layout status is 200",
+                            "path": "::GET _ngrx_record_v1_contents_786487_layout::GET _ngrx_record_v1_contents_786487_layout status is 200",
+                            "id": "091d186424181a45829192a0eff79652",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_contents_786487_layout response time < 3500ms": {
+                            "name": "GET _ngrx_record_v1_contents_786487_layout response time < 3500ms",
+                            "path": "::GET _ngrx_record_v1_contents_786487_layout::GET _ngrx_record_v1_contents_786487_layout response time < 3500ms",
+                            "id": "ad7aee0a534f2f23db09a6effd21a954",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    }
+            },
+            "PUT _ngrx_record_v1_contents_786487_acquire_lock": {
+                "groups": {},
+                "checks": {
+                        "PUT _ngrx_record_v1_contents_786487_acquire_lock status is 200": {
+                            "id": "17bc7763076e86183e039fa5a3bb2cb4",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "PUT _ngrx_record_v1_contents_786487_acquire_lock status is 200",
+                            "path": "::PUT _ngrx_record_v1_contents_786487_acquire_lock::PUT _ngrx_record_v1_contents_786487_acquire_lock status is 200"
+                        },
+                        "PUT _ngrx_record_v1_contents_786487_acquire_lock response time < 3500ms": {
+                            "name": "PUT _ngrx_record_v1_contents_786487_acquire_lock response time < 3500ms",
+                            "path": "::PUT _ngrx_record_v1_contents_786487_acquire_lock::PUT _ngrx_record_v1_contents_786487_acquire_lock response time < 3500ms",
+                            "id": "a8d74be8b03bed02ae2d8a8657abd66f",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    },
+                "name": "PUT _ngrx_record_v1_contents_786487_acquire_lock",
+                "path": "::PUT _ngrx_record_v1_contents_786487_acquire_lock",
+                "id": "32471e2ace040d1f78fc5632f0b082f1"
+            },
+            "DELETE _ngrx_record_v1_contents_786487": {
+                "name": "DELETE _ngrx_record_v1_contents_786487",
+                "path": "::DELETE _ngrx_record_v1_contents_786487",
+                "id": "ff0eb3efae8042722a148545477d9b41",
+                "groups": {},
+                "checks": {
+                        "DELETE _ngrx_record_v1_contents_786487 status is 200": {
+                            "id": "202d5fe0ca0644b52d7019e435fe1e16",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "DELETE _ngrx_record_v1_contents_786487 status is 200",
+                            "path": "::DELETE _ngrx_record_v1_contents_786487::DELETE _ngrx_record_v1_contents_786487 status is 200"
+                        },
+                        "DELETE _ngrx_record_v1_contents_786487 response time < 3500ms": {
+                            "name": "DELETE _ngrx_record_v1_contents_786487 response time < 3500ms",
+                            "path": "::DELETE _ngrx_record_v1_contents_786487::DELETE _ngrx_record_v1_contents_786487 response time < 3500ms",
+                            "id": "5f63e60536843bab798c5ae3f4c2a98c",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    }
+            },
+            "PATCH _ngrx_record_v1_contents_786487_release_lock": {
+                "id": "0a86e6f90f57583c6fbd73dce2d5d99b",
+                "groups": {},
+                "checks": {
+                        "PATCH _ngrx_record_v1_contents_786487_release_lock status is 200": {
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "PATCH _ngrx_record_v1_contents_786487_release_lock status is 200",
+                            "path": "::PATCH _ngrx_record_v1_contents_786487_release_lock::PATCH _ngrx_record_v1_contents_786487_release_lock status is 200",
+                            "id": "41f3a70c19521934f73025139495d56c"
+                        },
+                        "PATCH _ngrx_record_v1_contents_786487_release_lock response time < 3500ms": {
+                            "name": "PATCH _ngrx_record_v1_contents_786487_release_lock response time < 3500ms",
+                            "path": "::PATCH _ngrx_record_v1_contents_786487_release_lock::PATCH _ngrx_record_v1_contents_786487_release_lock response time < 3500ms",
+                            "id": "74c5c75878a4ef0b98519f0db2ff9622",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    },
+                "name": "PATCH _ngrx_record_v1_contents_786487_release_lock",
+                "path": "::PATCH _ngrx_record_v1_contents_786487_release_lock"
+            },
+            "GET _ngrx_metadata_ModuleMetadata_moduleIds_10162": {
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_metadata_ModuleMetadata_moduleIds_10162 status is 200": {
+                            "name": "GET _ngrx_metadata_ModuleMetadata_moduleIds_10162 status is 200",
+                            "path": "::GET _ngrx_metadata_ModuleMetadata_moduleIds_10162::GET _ngrx_metadata_ModuleMetadata_moduleIds_10162 status is 200",
+                            "id": "5f5bb999efb85ab2693fe247fa561d07",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_metadata_ModuleMetadata_moduleIds_10162 response time < 3500ms": {
+                            "name": "GET _ngrx_metadata_ModuleMetadata_moduleIds_10162 response time < 3500ms",
+                            "path": "::GET _ngrx_metadata_ModuleMetadata_moduleIds_10162::GET _ngrx_metadata_ModuleMetadata_moduleIds_10162 response time < 3500ms",
+                            "id": "2192985728049337289231f36281aad2",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    },
+                "name": "GET _ngrx_metadata_ModuleMetadata_moduleIds_10162",
+                "path": "::GET _ngrx_metadata_ModuleMetadata_moduleIds_10162",
+                "id": "127596ef4ebcc56f34e8cc3256df070a"
+            },
+            "GET _ngrx_search_reportCriteria_default_moduleId_10162": {
+                "path": "::GET _ngrx_search_reportCriteria_default_moduleId_10162",
+                "id": "18d358551167102551eba37026687df7",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_search_reportCriteria_default_moduleId_10162 status is 200": {
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_search_reportCriteria_default_moduleId_10162 status is 200",
+                            "path": "::GET _ngrx_search_reportCriteria_default_moduleId_10162::GET _ngrx_search_reportCriteria_default_moduleId_10162 status is 200",
+                            "id": "ebfe303e394dc219458fe8cff773d291"
+                        },
+                        "GET _ngrx_search_reportCriteria_default_moduleId_10162 response time < 3500ms": {
+                            "id": "48989f00b014d31b431b4333206f73eb",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_search_reportCriteria_default_moduleId_10162 response time < 3500ms",
+                            "path": "::GET _ngrx_search_reportCriteria_default_moduleId_10162::GET _ngrx_search_reportCriteria_default_moduleId_10162 response time < 3500ms"
+                        }
+                    },
+                "name": "GET _ngrx_search_reportCriteria_default_moduleId_10162"
+            },
+            "GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize": {
+                "name": "GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize",
+                "path": "::GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize",
+                "id": "12ce2965ec7da8897903eefd0d994882",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize status is 200": {
+                            "name": "GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize status is 200",
+                            "path": "::GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize::GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize status is 200",
+                            "id": "06702ef5b7ad2d5cf60e6a5a7d776009",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize response time < 3500ms": {
+                            "name": "GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize response time < 3500ms",
+                            "path": "::GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize::GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize response time < 3500ms",
+                            "id": "2dd216e55e888a06cf18741507e9aa41",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    }
+            },
+            "POST _ngrx_search_results": {
+                "name": "POST _ngrx_search_results",
+                "path": "::POST _ngrx_search_results",
+                "id": "1c84e60f40cdbd4089c08f497ff4a669",
+                "groups": {},
+                "checks": {
+                        "POST _ngrx_search_results status is 200": {
+                            "name": "POST _ngrx_search_results status is 200",
+                            "path": "::POST _ngrx_search_results::POST _ngrx_search_results status is 200",
+                            "id": "5c9005af9c01909d0d7bcb4d747c1a59",
+                            "passes": 4,
+                            "fails": 0
+                        },
+                        "POST _ngrx_search_results response time < 3500ms": {
+                            "passes": 4,
+                            "fails": 0,
+                            "name": "POST _ngrx_search_results response time < 3500ms",
+                            "path": "::POST _ngrx_search_results::POST _ngrx_search_results response time < 3500ms",
+                            "id": "ef758a23b4bd4e5d0598262ca7cddcc2"
+                        }
+                    }
+            },
+            "POST _ngrx_search_results_0_facets": {
+                "id": "833442a9a3cda795c4eda966c9a2c969",
+                "groups": {},
+                "checks": {
+                        "POST _ngrx_search_results_0_facets status is 200": {
+                            "name": "POST _ngrx_search_results_0_facets status is 200",
+                            "path": "::POST _ngrx_search_results_0_facets::POST _ngrx_search_results_0_facets status is 200",
+                            "id": "dfbca5000bb721d15a19ce6dd3917b0f",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "POST _ngrx_search_results_0_facets response time < 3500ms": {
+                            "fails": 0,
+                            "name": "POST _ngrx_search_results_0_facets response time < 3500ms",
+                            "path": "::POST _ngrx_search_results_0_facets::POST _ngrx_search_results_0_facets response time < 3500ms",
+                            "id": "b0e5136d35bf39d945fbc1fd932faabb",
+                            "passes": 2
+                        }
+                    },
+                "name": "POST _ngrx_search_results_0_facets",
+                "path": "::POST _ngrx_search_results_0_facets"
+            }
+        },
+        "checks": {},
+        "name": "",
+        "path": ""
+    }
+}

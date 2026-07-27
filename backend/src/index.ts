@@ -24,6 +24,7 @@ import aiGenerateRouter from './routes/aiGenerate';
 import harGenerateRouter from './routes/harGenerate';
 
 import { agentRegistry } from './services/agentRegistry';
+import { getAutoFixRun, clearAutoFixRun, attemptAutoFix } from './services/autoFixRunner';
 import { pushExecutionMetrics } from './services/influxdb';
 import { coralogix } from './services/coralogix';
 import { requestLogger } from './middleware/requestLogger';
@@ -41,7 +42,14 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+// POST/PUT /api/test-specs persists the original uploaded HAR/JSON file(s) as
+// base64 inside uploadedFiles (so re-opening a saved suite doesn't require
+// re-uploading) — the HAR upload endpoints themselves (upload.ts/harGenerate.ts)
+// already accept files up to 200MB via multer, and base64 inflates that by
+// ~1.37x, so this limit must be raised to match rather than sit far below it
+// (a 5mb cap here made every HAR over ~3.6MB raw fail to SAVE even though it
+// generated successfully).
+app.use(express.json({ limit: '250mb' }));
 app.use(requestLogger);
 
 // Public routes (no JWT required)
@@ -439,6 +447,39 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
           }
         }
 
+        // ── Auto-fix & retry ───────────────────────────────────────────────────
+        // If this run was started with auto-fix enabled and it failed, ask Claude
+        // to diagnose the failure (thresholds/checks/console output) and rewrite
+        // the script, then redispatch the SAME executionId. Skip the rest of the
+        // finalize flow below (InfluxDB push, notifications, 'complete' signal) —
+        // from the frontend's point of view the job is still in progress.
+        const autoFixRun = getAutoFixRun(executionId);
+        if (status === 'fail' && autoFixRun && autoFixRun.attempt < autoFixRun.maxAttempts) {
+          sendLog(`[PerfOps] ─────────────────────────────────────────────`);
+          sendLog(`[PerfOps] ↻ Auto-fix: attempt ${autoFixRun.attempt}/${autoFixRun.maxAttempts} failed — asking Claude to analyze and fix the script…`);
+          const bufferedLogs = (executionLogBuffers.get(executionId) ?? [])
+            .filter((p: any) => p.type === 'log')
+            .map((p: any) => p.data?.line ?? '')
+            .join('\n');
+          const fixResult = await attemptAutoFix(
+            executionId,
+            { exitCode, summary, thresholdResults, checkResults, consoleTail: bufferedLogs },
+            (line) => sendLog(`[AutoFix] ${line}`),
+          );
+          if (fixResult.ok) {
+            sendLog(`[PerfOps] ✓ Auto-fix applied — re-running script (attempt ${fixResult.nextAttempt}/${autoFixRun.maxAttempts})…`);
+            const fixedScript = getAutoFixRun(executionId)?.script;
+            sendToExecution(executionId, { type: 'retry', timestamp: Date.now(), data: { attempt: fixResult.nextAttempt, maxAttempts: autoFixRun.maxAttempts, fixedScript } });
+            agentRegistry.setStatus(agentId, 'online');
+            await prisma.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => {});
+            break;
+          }
+          sendLog(`[PerfOps] ⚠ Auto-fix could not be applied (${fixResult.reason}) — reporting final result.`);
+          clearAutoFixRun(executionId);
+        } else if (autoFixRun) {
+          clearAutoFixRun(executionId);
+        }
+
         // ── 2. Push to InfluxDB ────────────────────────────────────────────────
         const finishedExecution = await prisma.execution
           .findUnique({ where: { id: executionId } })
@@ -517,11 +558,42 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
 
         agentRegistry.setStatus(agentId, 'online');
         await prisma.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => {});
+        // Credentials CSV cache (if any) is only needed for the duration of the
+        // run — drop it now that the execution has reached a terminal state.
+        await prisma.executionCredential.deleteMany({ where: { executionId } }).catch(() => {});
         break;
       }
 
       case 'job_error': {
         const { executionId, message } = payload;
+
+        const autoFixRun = getAutoFixRun(executionId);
+        if (autoFixRun && autoFixRun.attempt < autoFixRun.maxAttempts) {
+          sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[PerfOps] ✗ Execution error (attempt ${autoFixRun.attempt}/${autoFixRun.maxAttempts}): ${message}` } });
+          sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[PerfOps] ↻ Auto-fix: asking Claude to analyze and fix the script…` } });
+          const bufferedLogs = (executionLogBuffers.get(executionId) ?? [])
+            .filter((p: any) => p.type === 'log')
+            .map((p: any) => p.data?.line ?? '')
+            .join('\n');
+          const fixResult = await attemptAutoFix(
+            executionId,
+            { message, consoleTail: bufferedLogs },
+            (line) => sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[AutoFix] ${line}` } }),
+          );
+          if (fixResult.ok) {
+            sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[PerfOps] ✓ Auto-fix applied — re-running script (attempt ${fixResult.nextAttempt}/${autoFixRun.maxAttempts})…` } });
+            const fixedScript = getAutoFixRun(executionId)?.script;
+            sendToExecution(executionId, { type: 'retry', timestamp: Date.now(), data: { attempt: fixResult.nextAttempt, maxAttempts: autoFixRun.maxAttempts, fixedScript } });
+            agentRegistry.setStatus(agentId, 'online');
+            await prisma.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => {});
+            break;
+          }
+          sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[PerfOps] ⚠ Auto-fix could not be applied: ${fixResult.reason}` } });
+          clearAutoFixRun(executionId);
+        } else if (autoFixRun) {
+          clearAutoFixRun(executionId);
+        }
+
         sendToExecution(executionId, {
           type: 'error',
           timestamp: Date.now(),
@@ -535,6 +607,7 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
         coralogix.error('k6_execution', { event: 'execution_error', executionId, agentId, message });
         agentRegistry.setStatus(agentId, 'online');
         await prisma.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => {});
+        await prisma.executionCredential.deleteMany({ where: { executionId } }).catch(() => {});
         break;
       }
     }

@@ -3,7 +3,7 @@ import { SloDefinition, SLO_METRIC_OPTIONS } from '../types/slo';
 import { useNavigate } from 'react-router-dom';
 import {
   Play, Square, Terminal, AlertCircle,
-  CheckCircle, Loader2, ExternalLink, Copy, FileText
+  CheckCircle, Loader2, ExternalLink, Copy, FileText, Sparkles, Send
 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import {
@@ -77,11 +77,18 @@ export const Executor: React.FC = () => {
   const [constantDuration, setConstantDuration] = useState('1m');
   const [envVars, setEnvVars] = useState<EnvVar[]>([]);
 
+  // Agent auto-fix & retry: on failure, the backend asks Claude to diagnose
+  // and rewrite the script, then re-runs it — repeating until it succeeds or
+  // maxAttempts total runs is reached.
+  const [autoFix, setAutoFix] = useState(true);
+  const [autoFixMaxAttemptsInput, setAutoFixMaxAttemptsInput] = useState(3);
+
   // Execution state lives in ExecutionContext (above the router) so an in-progress
   // run survives navigating away from this page — see ExecutionStatusPopup.
   const {
     status, executionId, liveMetrics, systemMetrics, consoleLines, summary,
     k6NotFound, sloResults, startExecution, stopExecution,
+    autoFixAttempt, autoFixMaxAttempts, autoFixedScript,
   } = useExecution();
 
   const consoleBoxRef = useRef<HTMLDivElement>(null);
@@ -152,6 +159,7 @@ export const Executor: React.FC = () => {
     await startExecution({
       script, profileType, stages, constantVus, constantDuration,
       envVars: envObj, testName, slos, specId,
+      autoFix, maxAttempts: autoFixMaxAttemptsInput,
     });
   };
 
@@ -164,7 +172,7 @@ export const Executor: React.FC = () => {
       const token = localStorage.getItem('auth_token');
       const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
       const authHeaders = { ...headers, 'Content-Type': 'application/json' };
-      fetch(`/api/testSpecs/${specId}`, { headers })
+      fetch(`/api/test-specs/${specId}`, { headers })
         .then(r => r.json())
         .then(currentSpec => {
           const updatedLoadProfile = {
@@ -175,7 +183,7 @@ export const Executor: React.FC = () => {
               : { stages: [{ target: constantVus, duration: constantDuration }] }),
             lastExecutorScriptSource: scriptSource,
           };
-          return fetch(`/api/testSpecs/${specId}`, {
+          return fetch(`/api/test-specs/${specId}`, {
             method: 'PUT',
             headers: authHeaders,
             body: JSON.stringify({ ...currentSpec, loadProfile: updatedLoadProfile }),
@@ -184,6 +192,33 @@ export const Executor: React.FC = () => {
         .catch(() => {});
     }
   }, [status, executionId]);
+
+  // When the backend's auto-fix diagnoses and rewrites a failing script mid-run,
+  // reflect that rewritten script everywhere the original one lived — the local
+  // editor state (whichever source produced it), sessionStorage (so a refresh of
+  // this page doesn't lose it), and the test suite's saved spec (so future runs
+  // from Test Authoring pick up the fix instead of the stale, broken script).
+  useEffect(() => {
+    if (!autoFixedScript) return;
+    if (scriptSource === 'authoring') setAuthoringScript(autoFixedScript);
+    else if (scriptSource === 'upload') setUploadedScript(autoFixedScript);
+    else setPastedScript(autoFixedScript);
+    sessionStorage.setItem('generatedK6Script', autoFixedScript);
+
+    if (specId) {
+      const token = localStorage.getItem('auth_token');
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      fetch(`/api/test-specs/${specId}`, { headers })
+        .then(r => r.json())
+        .then(currentSpec => fetch(`/api/test-specs/${specId}`, {
+          method: 'PUT',
+          headers: { ...headers, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...currentSpec, generatedScript: autoFixedScript }),
+        }))
+        .catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFixedScript]);
 
   const onDrop = useCallback((files: File[]) => {
     const f = files[0];
@@ -242,6 +277,82 @@ export const Executor: React.FC = () => {
   };
 
   const [logsCopied, setLogsCopied] = useState(false);
+
+  // ── AI Troubleshooting ──────────────────────────────────────────────────
+  const [troubleshootContext, setTroubleshootContext] = useState('');
+  const [troubleshootAnswer, setTroubleshootAnswer] = useState('');
+  const [troubleshootStatus, setTroubleshootStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+  const [troubleshootError, setTroubleshootError] = useState('');
+  const troubleshootAbortRef = useRef<AbortController | null>(null);
+
+  const handleTroubleshoot = async () => {
+    if (!troubleshootContext.trim() && consoleLines.length === 0) return;
+
+    setTroubleshootStatus('loading');
+    setTroubleshootAnswer('');
+    setTroubleshootError('');
+    troubleshootAbortRef.current = new AbortController();
+
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch('/api/executor/troubleshoot', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          context: troubleshootContext,
+          script: getActiveScript(),
+          consoleLogs: consoleLines.map(l => l.text).join('\n'),
+          summary,
+        }),
+        signal: troubleshootAbortRef.current.signal,
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Request failed');
+      }
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === 'chunk') {
+              accumulated += event.text;
+              setTroubleshootAnswer(accumulated);
+            } else if (event.type === 'complete') {
+              setTroubleshootAnswer(event.message || accumulated);
+              setTroubleshootStatus('done');
+            } else if (event.type === 'error') {
+              throw new Error(event.message);
+            }
+          } catch (parseErr: any) {
+            if (parseErr.message !== 'Unexpected end of JSON input') throw parseErr;
+          }
+        }
+      }
+      setTroubleshootStatus(prev => (prev === 'loading' ? 'done' : prev));
+    } catch (err: any) {
+      if (err.name === 'AbortError') { setTroubleshootStatus('idle'); return; }
+      setTroubleshootStatus('error');
+      setTroubleshootError(err.message);
+    }
+  };
 
   const handleCopyLogs = () => {
     const text = consoleLines.map(l => l.text).join('\n');
@@ -353,7 +464,32 @@ export const Executor: React.FC = () => {
             {statusCfg.icon}
             {statusCfg.label}
             {liveMetrics.progress > 0 && isExecuting && <span className="ml-1 opacity-80">{liveMetrics.progress}%</span>}
+            {isExecuting && autoFixMaxAttempts > 1 && (
+              <span className="ml-1 opacity-80">· auto-fix attempt {autoFixAttempt}/{autoFixMaxAttempts}</span>
+            )}
           </div>
+          <label className="flex items-center gap-1.5 text-xs text-gray-600 select-none" title="On failure, ask Claude to diagnose and rewrite the script, then re-run — repeating until it passes or the attempt limit is reached.">
+            <input
+              type="checkbox"
+              checked={autoFix}
+              disabled={isExecuting}
+              onChange={e => setAutoFix(e.target.checked)}
+              className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+            />
+            Auto-fix &amp; retry
+            {autoFix && (
+              <input
+                type="number"
+                min={2}
+                max={5}
+                value={autoFixMaxAttemptsInput}
+                disabled={isExecuting}
+                onChange={e => setAutoFixMaxAttemptsInput(Math.min(Math.max(parseInt(e.target.value, 10) || 3, 2), 5))}
+                className="w-12 px-1.5 py-0.5 border border-gray-300 rounded text-xs text-gray-900"
+                title="Max attempts"
+              />
+            )}
+          </label>
           <button type="button" onClick={handleExecute} disabled={isExecuting || !getActiveScript().trim()}
             title={!getActiveScript().trim() ? 'Load a script before executing' : undefined}
             className="flex items-center justify-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-semibold text-white transition-colors shadow-sm">
@@ -593,6 +729,53 @@ export const Executor: React.FC = () => {
           Execution ended with an error. Check the console output above.
         </div>
       )}
+
+      {/* AI Troubleshooting */}
+      <div className="mb-4">
+        <div className="flex items-center gap-2 mb-2">
+          <Sparkles size={14} className="text-brand-600" />
+          <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold">Troubleshoot with AI</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <p className="text-xs text-gray-500 mb-2">
+            Describe what's going wrong, then ask Claude to diagnose it using the current script, console output
+            {status === 'complete' ? ' and summary' : ''} from this execution.
+          </p>
+          <textarea
+            className="w-full h-20 px-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
+            placeholder="e.g. Why is my error rate spiking after 2 minutes? Or paste the specific error you're seeing."
+            value={troubleshootContext}
+            onChange={e => setTroubleshootContext(e.target.value)}
+            disabled={troubleshootStatus === 'loading'}
+          />
+          <div className="flex items-center justify-between mt-2">
+            <span className="text-xs text-gray-400">
+              {consoleLines.length > 0 ? `${consoleLines.length} console lines will be sent as context` : 'No console output captured yet'}
+            </span>
+            <button
+              type="button"
+              onClick={handleTroubleshoot}
+              disabled={troubleshootStatus === 'loading' || (!troubleshootContext.trim() && consoleLines.length === 0)}
+              className="flex items-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-semibold text-white transition-colors shadow-sm"
+            >
+              {troubleshootStatus === 'loading' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+              {troubleshootStatus === 'loading' ? 'Analyzing…' : 'Ask Claude'}
+            </button>
+          </div>
+
+          {troubleshootStatus === 'error' && (
+            <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+              {troubleshootError}
+            </div>
+          )}
+
+          {(troubleshootAnswer || troubleshootStatus === 'loading') && troubleshootStatus !== 'error' && (
+            <div className="mt-3 bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-800 whitespace-pre-wrap leading-relaxed">
+              {troubleshootAnswer || 'Thinking…'}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };

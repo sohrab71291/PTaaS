@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useDropzone } from 'react-dropzone';
 import {
   ChevronDown, ChevronUp, Save, Eye, Calendar,
   GitBranch, Plus, Trash2,
   Code2, Copy, RotateCcw, Send, Loader2, Sparkles, Globe,
+  AlertCircle,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { TestSpec, Header } from '../types';
@@ -14,7 +16,7 @@ import { useToast } from '../hooks/useToast';
 import { ToastContainer } from '../components/ToastContainer';
 import { useFetch } from '../hooks/useFetch';
 import { PreviewDrawer } from '../components/PreviewDrawer';
-import { AIGeneratePanel } from '../components/AIGeneratePanel';
+import { AIGeneratePanel, StoredFile } from '../components/AIGeneratePanel';
 import { AgentRefinePanel } from '../components/AgentRefinePanel';
 import { HarToScriptPanel } from '../components/HarToScriptPanel';
 import { SloEditor } from '../components/SloEditor';
@@ -22,6 +24,9 @@ import {
   TestType, Complexity, TestTypeProfile, TEST_TYPE_PROFILES,
   Stage, EnvVar, TEST_TYPE_TO_AI_LABEL, COMPLEXITY_TO_AI_LABEL,
 } from '../lib/testProfiles';
+import { ScriptSpecSnapshot, buildScriptSpecSnapshot, computeSpecDiff } from '../lib/specDiff';
+
+interface StoredFileWithSource extends StoredFile { source: 'ai' | 'har'; }
 
 const DEFAULT_SPEC: Omit<TestSpec, 'id' | 'createdAt' | 'updatedAt' | 'lastRunStatus' | 'lastRunAt'> = {
   name: '',
@@ -121,6 +126,87 @@ export const TestAuthor: React.FC = () => {
   const [constantDuration, setConstantDuration] = useState('1m');
   const [envVars, setEnvVars] = useState<EnvVar[]>([]);
 
+  // Login credentials CSV — uploaded here so it can gate script generation;
+  // cached in Postgres by the backend and picked up by the Executor at run
+  // time via credentialBatchId (see stashForExecutor/storeExecutionSettings).
+  const [credentialBatchId, setCredentialBatchId] = useState<string | null>(null);
+  const [credentialFileName, setCredentialFileName] = useState<string | null>(null);
+  const [credentialCount, setCredentialCount] = useState(0);
+  const [credentialUploading, setCredentialUploading] = useState(false);
+  const [credentialError, setCredentialError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const bid = sessionStorage.getItem('generatedK6ScriptCredentialBatchId');
+    const fn = sessionStorage.getItem('generatedK6ScriptCredentialFileName');
+    const cnt = sessionStorage.getItem('generatedK6ScriptCredentialCount');
+    if (bid) setCredentialBatchId(bid);
+    if (fn) setCredentialFileName(fn);
+    if (cnt) setCredentialCount(parseInt(cnt, 10) || 0);
+  }, []);
+
+  const onDropCredentials = useCallback(async (files: File[]) => {
+    const f = files[0];
+    if (!f) return;
+    setCredentialError(null);
+    setCredentialUploading(true);
+    try {
+      const form = new FormData();
+      form.append('file', f);
+      const token = localStorage.getItem('auth_token');
+      const res = await fetch('/api/executor/credentials', {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to upload credentials CSV');
+      setCredentialBatchId(data.batchId);
+      setCredentialFileName(f.name);
+      setCredentialCount(data.count);
+      sessionStorage.setItem('generatedK6ScriptCredentialBatchId', data.batchId);
+      sessionStorage.setItem('generatedK6ScriptCredentialFileName', f.name);
+      sessionStorage.setItem('generatedK6ScriptCredentialCount', String(data.count));
+    } catch (e: any) {
+      setCredentialError(e.message || 'Failed to upload credentials CSV');
+      setCredentialBatchId(null);
+      setCredentialFileName(null);
+      setCredentialCount(0);
+    } finally {
+      setCredentialUploading(false);
+    }
+  }, []);
+
+  const { getRootProps: getCredRootProps, getInputProps: getCredInputProps, isDragActive: isCredDragActive } = useDropzone({
+    onDrop: onDropCredentials,
+    accept: { 'text/csv': ['.csv'], 'application/vnd.ms-excel': ['.csv'] },
+    multiple: false,
+  });
+
+  const clearCredentials = () => {
+    setCredentialBatchId(null);
+    setCredentialFileName(null);
+    setCredentialCount(0);
+    setCredentialError(null);
+    sessionStorage.removeItem('generatedK6ScriptCredentialBatchId');
+    sessionStorage.removeItem('generatedK6ScriptCredentialFileName');
+    sessionStorage.removeItem('generatedK6ScriptCredentialCount');
+  };
+
+  // Source files that generatedScript was produced from (test-case file for
+  // the AI-generate tab, HAR/JSON captures for the import tab) — persisted
+  // with the suite so re-opening it for edits doesn't force a re-upload
+  // before "Generate" works again.
+  const [aiFile, setAiFile] = useState<StoredFile | null>(null);
+  const [harFiles, setHarFiles] = useState<StoredFile[]>([]);
+
+  // Snapshot of the spec fields that affect the script, taken whenever the
+  // script is (re)generated or loaded — diffed against current form state to
+  // detect suite edits that haven't been reflected in the script yet.
+  const [scriptSpecSnapshot, setScriptSpecSnapshot] = useState<ScriptSpecSnapshot | null>(null);
+  const [syncingScript, setSyncingScript] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncAbortRef = useRef<AbortController | null>(null);
+
   // Tracks whether anything has changed since the last successful save —
   // drives the "save before running?" prompt when sending to the Executor.
   const [dirty, setDirty] = useState(false);
@@ -170,9 +256,98 @@ export const TestAuthor: React.FC = () => {
     if (!spec.request.url.trim()) return 'Enter a Request URL (section C) before generating a script.';
     if (spec.checks.filter((c: string) => c.trim()).length === 0) return 'Add at least one Check (section D) before generating a script.';
     if (Object.keys(spec.thresholds).length === 0) return 'Add at least one Threshold (section D) before generating a script.';
+    if (!credentialBatchId) return 'Upload a Login Credentials CSV before generating a script.';
     return null;
   };
   const blockedReason = generationBlockedReason();
+
+  // Builds the current spec snapshot used to detect drift from the last
+  // generated/loaded script (see scriptSpecSnapshot above).
+  const currentSnapshot = useCallback((): ScriptSpecSnapshot => buildScriptSpecSnapshot({
+    name: spec.name,
+    request: spec.request,
+    checks: spec.checks,
+    thresholds: spec.thresholds,
+    profileType, stages, constantVus, constantDuration,
+    envVars,
+    slos: (spec as any).slos ?? [],
+    testType,
+    complexity,
+  }), [spec, profileType, stages, constantVus, constantDuration, envVars, testType, complexity]);
+
+  // Non-empty only once a script exists and the suite has since drifted from
+  // the snapshot it was generated/loaded against.
+  const specDiffSinceScript = generatedScript && scriptSpecSnapshot
+    ? computeSpecDiff(scriptSpecSnapshot, currentSnapshot())
+    : [];
+
+  const handleSyncScript = async () => {
+    if (!generatedScript || specDiffSinceScript.length === 0 || syncingScript) return;
+    setSyncingScript(true);
+    setSyncError(null);
+    syncAbortRef.current = new AbortController();
+
+    const prompt =
+      `Apply ONLY the following test-suite configuration changes to this k6 script, preserving everything else (structure, comments, unrelated logic) exactly as-is:\n` +
+      specDiffSinceScript.map(d => `- ${d}`).join('\n');
+
+    try {
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch('/api/ai-refine', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ currentScript: generatedScript, prompt }),
+        signal: syncAbortRef.current.signal,
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || 'Request failed');
+      }
+
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulated = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === 'chunk') {
+              accumulated += event.text;
+            } else if (event.type === 'complete') {
+              const clean = event.script || accumulated;
+              setGeneratedScript(clean);
+              setScriptSnapshot(clean);
+              setScriptEdited(false);
+              sessionStorage.setItem('generatedK6Script', clean);
+              setScriptSpecSnapshot(currentSnapshot());
+              addToast('Script updated to match the test suite changes.', 'success');
+            } else if (event.type === 'error') {
+              throw new Error(event.message);
+            }
+          } catch (parseErr: any) {
+            if (parseErr.message !== 'Unexpected end of JSON input') throw parseErr;
+          }
+        }
+      }
+    } catch (e: any) {
+      if (e.name === 'AbortError') return;
+      setSyncError(e.message || 'Failed to sync script with suite changes');
+      addToast(e.message || 'Failed to sync script with suite changes', 'error');
+    } finally {
+      setSyncingScript(false);
+    }
+  };
 
   // Section A/C/D/E context — sent alongside B's testType/complexity/loadProfile
   // to /api/ai-generate so the generated script reflects the entire spec.
@@ -235,6 +410,8 @@ export const TestAuthor: React.FC = () => {
     envVars.filter(e => e.key.trim()).forEach(e => { envObj[e.key] = e.value; });
     if (Object.keys(envObj).length) sessionStorage.setItem('generatedK6ScriptEnvVars', JSON.stringify(envObj));
     else sessionStorage.removeItem('generatedK6ScriptEnvVars');
+    if (credentialBatchId) sessionStorage.setItem('generatedK6ScriptCredentialBatchId', credentialBatchId);
+    else sessionStorage.removeItem('generatedK6ScriptCredentialBatchId');
   };
 
   // Shared completion handler for both Section F generators (AI-from-config and
@@ -251,6 +428,7 @@ export const TestAuthor: React.FC = () => {
     setGeneratedScript(script);
     setScriptSnapshot(script);
     setScriptEdited(false);
+    setScriptSpecSnapshot(currentSnapshot());
   };
 
   // Load existing spec if editing
@@ -259,19 +437,29 @@ export const TestAuthor: React.FC = () => {
       api.testSpecs.get(id).then((s: any) => {
         const {
           id: _id, createdAt: _c, updatedAt: _u, lastRunStatus: _ls, lastRunAt: _la,
-          generatedScript: gs, testType: tt, complexity: cx, envVars: ev, ...rest
+          generatedScript: gs, testType: tt, complexity: cx, envVars: ev, uploadedFiles: uf, ...rest
         } = s;
         setSpec(rest);
         setSavedId(id);
         if (tt) setTestType(tt);
         if (cx) setComplexity(cx);
-        if (Array.isArray(ev) && ev.length) setEnvVars(ev);
+        const loadedEnvVars = (Array.isArray(ev) && ev.length) ? ev : [];
+        if (loadedEnvVars.length) setEnvVars(loadedEnvVars);
         const lp = rest.loadProfile;
+        let loadedProfileType: 'staged' | 'constant' = 'staged';
+        let loadedStages = stages;
+        let loadedConstantVus = constantVus;
+        let loadedConstantDuration = constantDuration;
         if (lp?.type === 'constant') {
+          loadedProfileType = 'constant';
+          loadedConstantVus = lp.constantVus || constantVus;
+          loadedConstantDuration = lp.constantDuration || constantDuration;
           setProfileType('constant');
           if (lp.constantVus) setConstantVus(lp.constantVus);
           if (lp.constantDuration) setConstantDuration(lp.constantDuration);
         } else if (Array.isArray(lp?.stages) && lp.stages.length) {
+          loadedProfileType = 'staged';
+          loadedStages = lp.stages;
           setProfileType('staged');
           setStages(lp.stages);
         }
@@ -280,6 +468,27 @@ export const TestAuthor: React.FC = () => {
           setScriptSnapshot(gs);
           setScriptEdited(false);
           sessionStorage.setItem('generatedK6Script', gs);
+          // Baseline the diff-detection snapshot against exactly what's on
+          // disk (not React state, which hasn't flushed these setters yet).
+          setScriptSpecSnapshot(buildScriptSpecSnapshot({
+            name: rest.name,
+            request: rest.request,
+            checks: rest.checks,
+            thresholds: rest.thresholds,
+            profileType: loadedProfileType,
+            stages: loadedStages,
+            constantVus: loadedConstantVus,
+            constantDuration: loadedConstantDuration,
+            envVars: loadedEnvVars,
+            slos: rest.slos ?? [],
+            testType: tt ?? null,
+            complexity: cx ?? 'medium',
+          }));
+        }
+        if (Array.isArray(uf)) {
+          const ai = uf.find((f: StoredFileWithSource) => f.source === 'ai');
+          setAiFile(ai ? { name: ai.name, content: ai.content, mimeType: ai.mimeType } : null);
+          setHarFiles(uf.filter((f: StoredFileWithSource) => f.source === 'har').map((f: StoredFileWithSource) => ({ name: f.name, content: f.content, mimeType: f.mimeType })));
         }
         skipDirtyCheck.current = true;
         setDirty(false);
@@ -312,6 +521,10 @@ export const TestAuthor: React.FC = () => {
     if (!spec.name.trim()) { addToast('Name is required', 'error'); return null; }
     setSaving(true);
     try {
+      const uploadedFiles: StoredFileWithSource[] = [
+        ...(aiFile ? [{ ...aiFile, source: 'ai' as const }] : []),
+        ...harFiles.map(f => ({ ...f, source: 'har' as const })),
+      ];
       const payload = {
         ...spec,
         loadProfile: buildLoadProfile(),
@@ -319,6 +532,7 @@ export const TestAuthor: React.FC = () => {
         complexity,
         envVars: envVars.filter(e => e.key.trim()),
         generatedScript: generatedScript ?? null,
+        uploadedFiles,
       };
       let result: any;
       if (isEdit && savedId) {
@@ -913,6 +1127,33 @@ export const TestAuthor: React.FC = () => {
         </div>
       </div>
 
+      {/* Login Credentials CSV — required before a script can be generated */}
+      <div className="mt-4 bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Login Credentials CSV *</label>
+          <span className="text-xs text-gray-400">Required columns: URL, Username, Password, InstanceName — one row per VU</span>
+        </div>
+        {credentialBatchId ? (
+          <div className="flex items-center gap-2">
+            <span className="bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 text-xs text-green-700">
+              ✓ {credentialFileName} — {credentialCount} credential{credentialCount === 1 ? '' : 's'} loaded
+            </span>
+            <button type="button" onClick={clearCredentials}
+              className="text-xs text-gray-500 hover:text-red-600 px-2 py-1 rounded border border-gray-200 hover:border-red-300">
+              Remove
+            </button>
+          </div>
+        ) : (
+          <div {...getCredRootProps()} className={`border-2 border-dashed rounded-lg px-4 py-2 text-center cursor-pointer text-xs transition-colors ${isCredDragActive ? 'border-brand-500 bg-brand-50' : 'border-gray-300 hover:border-brand-400 hover:bg-gray-50'}`}>
+            <input {...getCredInputProps()} />
+            {credentialUploading
+              ? <span className="text-gray-500">Uploading…</span>
+              : <span className="text-gray-500">Drop credentials .csv file or click to browse — required to generate a script</span>}
+          </div>
+        )}
+        {credentialError && <p className="text-xs text-red-600 mt-1.5">{credentialError}</p>}
+      </div>
+
       {/* F. Script Generation — AI-from-config vs. HAR/JSON import, in separate tabs */}
       <div className="mt-4 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className={`px-6 py-4 ${genTab === 'ai' ? 'bg-gradient-to-r from-purple-600 to-indigo-600' : 'bg-gradient-to-r from-teal-600 to-cyan-600'}`}>
@@ -960,14 +1201,26 @@ export const TestAuthor: React.FC = () => {
               disabled={!!blockedReason}
               disabledReason={blockedReason ?? undefined}
               onScriptGenerated={handleScriptGenerated}
+              credentialBatchId={credentialBatchId}
+              initialFile={aiFile}
+              onFileChange={setAiFile}
             />
           ) : (
             <HarToScriptPanel
               embedded
               loadProfile={{ profileType, stages, constantVus, constantDuration }}
-              disabled={!spec.name.trim()}
-              disabledReason={!spec.name.trim() ? 'Enter a Test Name (section A) before converting a HAR/JSON file.' : undefined}
+              disabled={!spec.name.trim() || !credentialBatchId}
+              disabledReason={
+                !spec.name.trim()
+                  ? 'Enter a Test Name (section A) before converting a HAR/JSON file.'
+                  : !credentialBatchId
+                    ? 'Upload a Login Credentials CSV before converting a HAR/JSON file.'
+                    : undefined
+              }
               onScriptGenerated={handleScriptGenerated}
+              credentialBatchId={credentialBatchId}
+              initialFiles={harFiles}
+              onFilesChange={setHarFiles}
             />
           )}
         </div>
@@ -1031,6 +1284,36 @@ export const TestAuthor: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Suite-changed banner — shown whenever section A-E edits have drifted   */}
+          {/* from the spec the current script was generated/loaded against. "Sync"  */}
+          {/* sends only the itemized diff to /api/ai-refine, which is instructed to */}
+          {/* touch just those lines rather than regenerate the script from scratch. */}
+          {specDiffSinceScript.length > 0 && (
+            <div className="flex items-start gap-3 px-5 py-3 bg-amber-50 border-b border-amber-200">
+              <AlertCircle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-amber-800">
+                  Test suite changed since this script was generated ({specDiffSinceScript.length} change{specDiffSinceScript.length === 1 ? '' : 's'})
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {specDiffSinceScript.map((d, i) => (
+                    <li key={i} className="text-xs text-amber-700">• {d}</li>
+                  ))}
+                </ul>
+                {syncError && <p className="text-xs text-red-600 mt-1.5">{syncError}</p>}
+              </div>
+              <button
+                type="button"
+                onClick={handleSyncScript}
+                disabled={syncingScript}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded text-xs font-semibold transition-colors flex-shrink-0"
+              >
+                {syncingScript ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                {syncingScript ? 'Applying…' : 'Sync Script with Suite Changes'}
+              </button>
+            </div>
+          )}
 
           {/* Editable code area */}
           <textarea

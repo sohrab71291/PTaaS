@@ -6,7 +6,12 @@ import { agentRegistry } from '../services/agentRegistry';
 
 const router = Router();
 
-// Public — called by the agent CLI before it has a JWT
+// Public — called by the agent CLI before it has a JWT. The agent process
+// calls this on every startup (see agent/src/index.ts), so re-registering
+// under the same name rotates that agent's key in place instead of creating
+// a new row — otherwise every restart left a stale, orphaned credential
+// behind that could still authenticate a leftover process and desync from
+// whatever agent/.env said on disk.
 router.post('/agents/register', async (req: Request, res: Response) => {
   const { name, hostname } = req.body;
   if (!name) {
@@ -17,12 +22,13 @@ router.post('/agents/register', async (req: Request, res: Response) => {
   // TODO: hash apiKey with bcrypt before storing in production
   const apiKey = crypto.randomBytes(32).toString('hex');
 
-  const agent = await prisma.agent.create({
-    data: { name, apiKey, hostname: hostname ?? null },
-  });
+  const existing = await prisma.agent.findFirst({ where: { name } });
+  const agent = existing
+    ? await prisma.agent.update({ where: { id: existing.id }, data: { apiKey, hostname: hostname ?? null } })
+    : await prisma.agent.create({ data: { name, apiKey, hostname: hostname ?? null } });
 
   // apiKey returned in plaintext only this once
-  res.status(201).json({ agentId: agent.id, apiKey, name: agent.name });
+  res.status(existing ? 200 : 201).json({ agentId: agent.id, apiKey, name: agent.name });
 });
 
 // Protected — requires admin role

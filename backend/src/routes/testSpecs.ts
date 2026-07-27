@@ -12,7 +12,7 @@ router.get('/', async (_req: Request, res: Response) => {
 router.post('/', async (req: Request, res: Response) => {
   const {
     name, description, tags, request: reqConfig, loadProfile, thresholds, checks,
-    environmentId, generatedScript, slos, testType, complexity, envVars,
+    environmentId, generatedScript, slos, testType, complexity, envVars, uploadedFiles,
   } = req.body;
 
   // Upsert by name: same name → update existing suite; new name → create new suite.
@@ -33,6 +33,10 @@ router.post('/', async (req: Request, res: Response) => {
         testType: testType ?? null,
         complexity: complexity ?? null,
         envVars: envVars ?? [],
+        // Only overwrite when the caller actually sent files this time —
+        // otherwise a save that didn't touch Section F would wipe out files
+        // uploaded in an earlier session.
+        ...(uploadedFiles != null ? { uploadedFiles } : {}),
       },
     });
     return res.json(updated);
@@ -53,6 +57,7 @@ router.post('/', async (req: Request, res: Response) => {
       testType: testType ?? null,
       complexity: complexity ?? null,
       envVars: envVars ?? [],
+      uploadedFiles: uploadedFiles ?? [],
       lastRunStatus: null,
       lastRunAt: null,
     },
@@ -86,6 +91,9 @@ router.put('/:id', async (req: Request, res: Response) => {
         // Only overwrite the saved script when a non-null value is explicitly provided.
         // Sending null (no new script generated this session) preserves the existing one.
         ...(req.body.generatedScript != null ? { generatedScript: req.body.generatedScript } : {}),
+        // Same reasoning as generatedScript — only overwrite when files were
+        // actually sent this time.
+        ...(req.body.uploadedFiles != null ? { uploadedFiles: req.body.uploadedFiles } : {}),
         lastRunStatus: req.body.lastRunStatus,
         lastRunAt: req.body.lastRunAt ? new Date(req.body.lastRunAt) : null,
         scheduledAt: req.body.scheduledAt ? new Date(req.body.scheduledAt) : null,

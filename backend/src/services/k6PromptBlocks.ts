@@ -129,18 +129,19 @@ function flushInfluxLines() {
 function buildMetricTagSet(t) {
   return 'testid=' + escapeTagValue(t.testid) + ',scenario=' + escapeTagValue(t.scenario) + ',api=' + escapeTagValue(t.api) + ',url=' + escapeTagValue(t.url) + ',status=' + escapeTagValue(t.status);
 }
-// A replayed/captured request can legitimately land on a redirect or an
-// auth-probe response (401/403) without that being a real failure — e.g. a
-// captured 302 replays as a 302 to a different location, or a session check
-// intentionally probes with a stale token. Treat those as expected instead of
-// counting them against http_req_failed.
+// A replayed/captured request can legitimately land on a redirect to a
+// different location than the one captured — still a redirect, so still
+// expected. 401/403 are deliberately NOT treated as expected here: a real
+// auth failure (expired/invalid session, bad credentials, missing bearer
+// token) must show up as a failure in checks/http_req_failed/errorRate, not
+// get silently absorbed — that previously masked the true failure rate.
 function isResponseStatusExpected(response, expectedStatus) {
   if (expectedStatus === undefined || expectedStatus === null) return false;
   if (response.status === expectedStatus) return true;
   if (expectedStatus >= 300 && expectedStatus < 400) {
     return response.status >= 300 && response.status < 400;
   }
-  return response.status === 401 || response.status === 403;
+  return false;
 }
 function recordCustomMetrics(response, scenario, apiTag, urlPath, sentBytes, requestName, expectedStatus) {
   const failed = response.status >= 400 && !isResponseStatusExpected(response, expectedStatus) ? 1 : 0;
@@ -305,9 +306,234 @@ At the START of every exec function iteration (NOT export default), add:
 
 After EVERY http call, immediately call (the trailing expectedStatus arg lets
 recordCustomMetrics use the isResponseStatusExpected() helper declared in the
-InfluxDB block above, so an expected redirect or 401/403 auth-probe doesn't
-get counted as a failure):
+InfluxDB block above, so an expected redirect doesn't get counted as a failure
+— note 401/403 are NEVER treated as expected there, by design, so a real auth
+failure always counts against http_req_failed/errorRate):
   recordCustomMetrics(res, SCENARIO_NAME, '<api-tag>', '<url-path>', getByteLength(payload || ''), '<Step Name>', <expected-status>);
+`;
+}
+
+export function buildCsvCredentialAuthPatternBlock(): string {
+  return `════════════════════════════════════════════════════════════════
+AUTHENTICATION PATTERN — CSV-BASED PER-VU CREDENTIALS. MANDATORY when the user
+has opted into CSV-based login credentials. Do NOT write a generic single
+shared setup() login for this mode — every VU logs in with its own
+username/password drawn from a credential pool uploaded on the Executor page.
+════════════════════════════════════════════════════════════════
+
+Declare this CREDENTIALS placeholder right after the InfluxDB block's env vars
+(the literal comment must be preserved verbatim — the real credential rows are
+spliced in at execution time, replacing the placeholder comment):
+
+const CREDENTIALS = ${CREDENTIALS_PLACEHOLDER}[];
+// Each entry has the shape: { loginUrl, username, password, instanceName } —
+// these come verbatim from the uploaded CSV's URL / Username / Password /
+// InstanceName columns. InstanceName is REQUIRED by the login API (Archer IRM
+// throws ArgumentNullException: request.Credentials.InstanceName when it is
+// missing/null) — every row in the CSV must supply a non-empty value.
+
+Reproduce these helpers VERBATIM before setup()/exec functions — do not
+paraphrase, simplify, rename fields, or drop the InstanceName field from the
+login payload; it is a required field, not optional. k6 runs each VU in its
+own isolated JS runtime, so plain module-scope variables are already per-VU —
+no extra locking or keying by __VU is needed for the login cache:
+
+function getVuCredential() {
+  if (!CREDENTIALS.length) {
+    fail('No login credentials available — upload a credentials CSV on the Executor page.');
+  }
+  return CREDENTIALS[(__VU - 1) % CREDENTIALS.length];
+}
+
+// Every VU needs its own cookie jar (module scope is per-VU in k6, so this
+// cache is automatically isolated — no keying by __VU needed), and the login
+// call plus every subsequent authenticated request MUST pass this SAME jar
+// (\`{ jar: getVuJar() }\` in the request params) — not just rely on the
+// manually-built Cookie header below. The login response's own Set-Cookie
+// values (e.g. an archer_ngrx_* session-state cookie) only get captured and
+// automatically replayed on later requests if they flow through a jar; if the
+// jar is skipped, the server keeps whatever it last set for that VU (possibly
+// a "logged-out" value from a prior 401) and every subsequent call 401s
+// regardless of how valid the fresh session token is.
+let __vuJar = null;
+function getVuJar() {
+  if (!__vuJar) __vuJar = http.cookieJar();
+  return __vuJar;
+}
+
+// The classic Archer session cookie (SessionToken -> __ArcherSessionCookie__)
+// does NOT necessarily authenticate the newer ngrx/Angular API surface
+// (/ngrx/*) — that surface commonly expects a separate bearer JWT. Extract
+// BOTH defensively from the same login response: whichever fields are
+// actually present get used, so this doesn't break APIs that only return one.
+function extractSessionToken(body) {
+  return (body && body.RequestedObject && body.RequestedObject.SessionToken) || '';
+}
+function extractJwt(body) {
+  if (!body) return '';
+  return (
+    (body.RequestedObject && (body.RequestedObject.Jwt || body.RequestedObject.AccessToken)) ||
+    body.Jwt || body.jwt || body.AccessToken || body.access_token || body.token || ''
+  );
+}
+function authHeadersFromAuth(auth) {
+  const headers = {};
+  if (auth && auth.cookieHeader) headers.Cookie = auth.cookieHeader;
+  if (auth && auth.jwt) headers.Authorization = 'Bearer ' + auth.jwt;
+  return headers;
+}
+
+let __vuAuth = null; // per-VU cache — module scope is per-VU in k6, so this is NOT shared across VUs
+function ensureAuth() {
+  if (__vuAuth) return __vuAuth;
+  const cred = getVuCredential();
+  // InstanceName is REQUIRED — the login API rejects the request with a null
+  // ArgumentNullException on request.Credentials.InstanceName if it's missing.
+  // Always include it verbatim from the CSV row, never omit or default it.
+  const loginPayload = { Username: cred.username, Password: cred.password, InstanceName: cred.instanceName };
+  const res = http.post(
+    cred.loginUrl,
+    JSON.stringify(loginPayload),
+    { headers: { 'Content-Type': 'application/json' }, tags: { name: 'Login' }, jar: getVuJar() },
+  );
+  let body = {};
+  try { body = res.json(); } catch (e) { body = {}; }
+  const sessionToken = extractSessionToken(body);
+  const jwt = extractJwt(body);
+  if (!sessionToken && !jwt) {
+    fail('Login failed for VU ' + __VU + ': ' + JSON.stringify(body).substring(0, 300));
+  }
+  __vuAuth = {
+    sessionToken: sessionToken,
+    jwt: jwt,
+    cookieHeader: sessionToken ? '__ArcherSessionCookie__=' + sessionToken : '',
+  };
+  console.log('VU ' + __VU + ': Successfully authenticated as ' + cred.username + (jwt ? ' (session cookie + bearer JWT)' : ' (session cookie only)'));
+  return __vuAuth;
+}
+
+// Call this after a request comes back 401 — the cached session (30-min token
+// in Archer's case) may have expired mid-run. Clears the cache AND the VU's
+// cookie jar before forcing a fresh login: the server responds to an
+// unauthenticated/expired-session call by setting its OWN session-state
+// cookie (e.g. archer_ngrx_*) to a "logged-out" value via Set-Cookie, and
+// since every request runs through getVuJar()'s shared jar, that stale
+// logged-out cookie would otherwise keep riding along next to the brand-new
+// __ArcherSessionCookie__ on every subsequent request — the server sees the
+// mismatch and immediately 401s again, forever. Wiping the jar for BASE_URL
+// first guarantees the only cookie the next request carries is the fresh one
+// this reauth() call is about to obtain.
+function reauth() {
+  __vuAuth = null;
+  console.warn('VU ' + __VU + ': got 401 — re-authenticating.');
+  const jar = getVuJar();
+  const stale = jar.cookiesForURL(BASE_URL) || {};
+  Object.keys(stale).forEach(function (name) {
+    jar.set(BASE_URL, name, '', { expires: new Date(0).toUTCString() });
+  });
+  return ensureAuth();
+}
+
+Every exec function MUST call ensureAuth() at the very start of the iteration
+(NOT in setup() — each VU logs in lazily on its own first iteration) and use
+the resulting headers (Cookie and, when the login returned a JWT, an
+Authorization: Bearer header too) on every authenticated request:
+
+export function <execFnName>() {
+  const auth = ensureAuth();
+  const authHeaders = authHeadersFromAuth(auth);
+  // ... use authHeaders on every authenticated request below. On a 401, call
+  // reauth() and retry that request once with authHeadersFromAuth(reauth()) —
+  // see REPLAY HARNESS PATTERN's replayStep for the reference implementation.
+}
+
+Every authenticated request MUST wrap headers in a params object, spreading
+authHeaders alongside any per-request headers (e.g. Content-Type), and MUST pass
+\`jar: getVuJar()\` so the server's own session-state cookies flow through and
+get replayed automatically (see getVuJar()'s comment above — skipping this is
+what causes repeated 401s after the first reauth). Do NOT set Origin, Referer,
+or User-Agent on any request — these headers must never be sent:
+
+const params = {
+  headers: { ...authHeaders, 'Content-Type': 'application/json' },
+  tags: { name: '<RequestName>' },
+  jar: getVuJar(),
+};
+const res = http.post(url, payload, params);
+
+Do NOT write a setup() login or share one session across VUs in this mode —
+each VU authenticates independently the first time ensureAuth() runs for it.
+setup() should still perform the InfluxDB bootstrap (ensureInfluxBucket(),
+k6VusMax, testStartEnd 'started') exactly as shown in the InfluxDB block above,
+just without any login logic.
+`;
+}
+
+// Archer's GetModuleRecordAccess endpoint needs a header shape that diverges
+// from every other authenticated call in the script (see the incident this
+// codifies: a Postman replay of this exact call redirected to Default.aspx
+// because the request carried the wrong/extra headers and a stale cookie).
+// This block is appended whenever the test cases target that endpoint so
+// Claude reproduces the two-header call and the resulting csrf-token capture
+// exactly, instead of reusing the generic AUTHENTICATION PATTERN's headers.
+export function buildModuleRecordAccessPatternBlock(): string {
+  return `════════════════════════════════════════════════════════════════
+GetModuleRecordAccess HEADER PATTERN — MANDATORY whenever a test case calls
+.../api/internal/Permission/GetModuleRecordAccess. This endpoint's header
+requirements are stricter than the generic AUTHENTICATION PATTERN above and
+override it for this endpoint specifically.
+════════════════════════════════════════════════════════════════
+
+Every call to GetModuleRecordAccess MUST send EXACTLY these three headers —
+no Accept, no other header from the generic pattern:
+
+  Cookie:                 '__ArcherSessionCookie__=' + data.sessionToken
+  x-http-method-override: 'GET'
+  Content-Type:           'application/json'
+
+data.sessionToken is the session token returned by the /api/security/login
+call performed in setup() (see AUTHENTICATION PATTERN above) — do NOT scrape
+or hardcode a session cookie value from the captured test case data; it will
+be stale by the time the script runs.
+
+const params = {
+  headers: {
+    Cookie: '__ArcherSessionCookie__=' + data.sessionToken,
+    'x-http-method-override': 'GET',
+    'Content-Type': 'application/json',
+  },
+  tags: { name: 'GetModuleRecordAccess' },
+};
+const res = http.post(url, payload, params);
+
+The response to THIS call carries the csrf token needed by every subsequent
+authenticated request, in its 'csrf-token' response header — capture it into
+a variable and thread it through as x-csrf-token on every later call. Do NOT
+use a value hardcoded/captured from the test case data — it must be read from
+THIS call's own response, every time the script runs:
+
+const csrfToken = res.headers['csrf-token'] || res.headers['Csrf-Token'] || '';
+
+x-archer-source IS MANDATORY on every OTHER classic Archer /api/* call (not
+just GetModuleRecordAccess) whenever the test case data captured one for that
+specific call — Archer's classic API gateway validates x-archer-source
+ALONGSIDE the csrf token to authorize the request, and its value is
+call-specific (e.g. "Archer,ConsumerResources" vs "Archer,Translations" vs
+"Archer,Navigation" — never a fixed/shared constant across endpoints). Dropping
+it produces a 403 "Forbidden: Access is denied" even though the session
+cookie and csrf token are both valid — this is NOT an auth failure, so do not
+mistake it for one and do not omit this header to "simplify" the request.
+Copy it VERBATIM per-call from that exact request's captured headers in the
+test case data — do NOT invent, reuse another call's value, or hardcode one:
+
+// Every authenticated request AFTER this one — but not this call itself —
+// MUST include x-csrf-token: csrfToken, and MUST include x-archer-source
+// verbatim from THAT call's own captured headers (when the test case data
+// has one for it) alongside its other headers:
+const laterParams = {
+  headers: { ...authHeaders, 'x-csrf-token': csrfToken, 'x-archer-source': '<verbatim from this call\\'s captured headers, if present>', 'Content-Type': 'application/json' },
+  tags: { name: '<RequestName>' },
+};
 `;
 }
 
@@ -336,6 +562,41 @@ ${HANDLE_SUMMARY_BLOCK}`;
 // scope" or similar. Instead: strip the two constants out before prompting,
 // have Claude work against a placeholder, then splice the real data back in.
 export const DATA_PLACEHOLDER = '/*__PERFOPS_CAPTURED_DATA__*/';
+
+// Placeholder for the CSV-based per-VU login credential pool (see
+// buildCsvCredentialAuthPatternBlock above). The real rows — uploaded on the
+// Executor page and cached in Postgres for the duration of the run — are
+// spliced in right before dispatch, exactly like DATA_PLACEHOLDER above.
+export const CREDENTIALS_PLACEHOLDER = '/*__PERFOPS_CREDENTIALS__*/';
+
+export interface ScriptCredential {
+  loginUrl: string;
+  username: string;
+  password: string;
+  instanceName: string;
+}
+
+// Splices the real credential pool into a script containing
+// `const CREDENTIALS = /*__PERFOPS_CREDENTIALS__*/[];`. Falls back to
+// inserting right after the last top-level import if the placeholder comment
+// is missing (e.g. a hand-written or older script) — same fallback strategy
+// as injectCapturedData below.
+export function injectCredentials(script: string, credentials: ScriptCredential[]): string {
+  const arrayLiteral = JSON.stringify(credentials);
+  if (script.includes(CREDENTIALS_PLACEHOLDER)) {
+    return script.replace(`${CREDENTIALS_PLACEHOLDER}[]`, arrayLiteral)
+                 .replace(CREDENTIALS_PLACEHOLDER, arrayLiteral);
+  }
+  const constLine = `const CREDENTIALS = ${arrayLiteral};`;
+  const importRegex = /^import .*;\s*$/gm;
+  let lastImportEnd = -1;
+  let match: RegExpExecArray | null;
+  while ((match = importRegex.exec(script)) !== null) {
+    lastImportEnd = match.index + match[0].length;
+  }
+  if (lastImportEnd === -1) return `${constLine}\n\n${script}`;
+  return `${script.slice(0, lastImportEnd)}\n\n${constLine}\n${script.slice(lastImportEnd)}`;
+}
 
 // Splices the real captured-request data into a Claude-produced script. Prefers
 // the placeholder Claude was told to leave; falls back to inserting right after
@@ -410,4 +671,30 @@ export function extractCapturedData(script: string): { dataBlock: string; stripp
   stripped = stripped.slice(0, firstStart) + DATA_PLACEHOLDER + '\n' + stripped.slice(firstStart);
 
   return { dataBlock, strippedScript: stripped };
+}
+
+// Same idea as extractCapturedData, but for the baked-in `const CREDENTIALS =
+// [...]` array from CSV-based auth scripts. Without this, /api/ai-refine would
+// send the real credential rows to Claude as plain text and ask it to
+// reproduce them verbatim in its rewrite — risking the same truncation/typo
+// hazard as captured requests, and unnecessarily exposing plaintext passwords
+// in the prompt. Returns null if the script has no CREDENTIALS constant.
+export function extractCredentials(script: string): { dataBlock: string; strippedScript: string } | null {
+  const credMatch = script.match(/const\s+CREDENTIALS\s*=/);
+  if (!credMatch || credMatch.index === undefined) return null;
+
+  const credSemi = findStatementEnd(script, credMatch.index + credMatch[0].length);
+  if (credSemi === -1) return null;
+
+  const start = credMatch.index;
+  const end = credSemi + 1;
+  const dataBlock = script.slice(start, end);
+  const stripped = script.slice(0, start) + `const CREDENTIALS = ${CREDENTIALS_PLACEHOLDER}[];` + script.slice(end);
+
+  return { dataBlock, strippedScript: stripped };
+}
+
+// Splices a previously-extracted `const CREDENTIALS = [...]` statement back in.
+export function injectCredentialsBlock(script: string, dataBlock: string): string {
+  return script.replace(`const CREDENTIALS = ${CREDENTIALS_PLACEHOLDER}[];`, dataBlock);
 }

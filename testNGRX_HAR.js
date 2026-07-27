@@ -1,20 +1,16 @@
 import http from 'k6/http';
-import { check, group, sleep } from 'k6';
+import { check, group, sleep, fail } from 'k6';
 import { Counter, Trend, Gauge } from 'k6/metrics';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 const LOGIN_REQUEST = null;
-const LOGIN_CREDENTIALS = {
-  loginCsrfToken: __ENV.LOGIN_CSRF_TOKEN || '',
-  username: __ENV.LOGIN_USERNAME || 'PerfUser1',
-  password: __ENV.LOGIN_PASSWORD || 'Password123$',
-};
+const CAPTURED_REQUESTS = [{"name":"GET _default_aspx","method":"GET","path":"/default.aspx","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _StyleResourceHandler_axd_p_fH4vZGVmYXVsdC5hc3B40_t_6391","method":"GET","path":"/StyleResourceHandler.axd?p=fH4vZGVmYXVsdC5hc3B40&t=639195229846619884&ArcherVersion=c3cb260b3e5a5591a6f1c6c5d0191df391f13bc22729d2740de02c612531d0f4","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _WebResource_axd_d_pynGkmcFUV13He1Qd6_TZIxkEYB6RI1YIrETS","method":"GET","path":"/WebResource.axd?d=pynGkmcFUV13He1Qd6_TZIxkEYB6RI1YIrETSxN6NpxbZJgCpN-U6cquvI2s8idV8bACyTqrdS87eAmahfv7qg2&t=638901536248157332","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_NJmAwtEo3Ipnlaxl6CMhvmQiZnK9lqwXEZ","method":"GET","path":"/ScriptResource.axd?d=NJmAwtEo3Ipnlaxl6CMhvmQiZnK9lqwXEZ0Xg_YiWwygcUInIrDOIrj_dfqx6w610cO-DqpfwOKHirwLO_A0u_DsvCf4C3bLqB0YIUIGEYjJ_kKUXli_4mayySu4_lTxZqOMdD0wCQevUUsXDyLJRTEn8pNHZ08Qs0FIED3FpAY1&t=5c0e0825","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_dwY9oWetJoJoVpgL6Zq8OMUN48DIY0ZYOD","method":"GET","path":"/ScriptResource.axd?d=dwY9oWetJoJoVpgL6Zq8OMUN48DIY0ZYODLqlbV33aKuZfdVVVJWoI01SX3s_1CXNBiNgfc80Dul_rMchPOOtIHLerwuyDiJQ8x8mHXOHvZW6xvgp1HptNhZDUFjvdOntrL0yS2uOXtHcoGBy1H7qsCSNTfqcxdPn6M5QJi8_T41&t=5c0e0825","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_VL_I2BbK22NYeoOk7XFelnZjZaG5gBciBm","method":"GET","path":"/ScriptResource.axd?d=VL_I2BbK22NYeoOk7XFelnZjZaG5gBciBmBe2CBwyV7Wo5HM8EPcAWyIkdgGXg7ozkBbCqonv7jFyamcgT11kZpotCQ60OKK61bTaWOuip2JEhsrb_LEvxGjNG53GZCJEmh1kvXGTfnc4VbTfv4xDA2&t=23d42d05","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_yJfeaaHSeQ_C_usISYYG59KkFdMmZEZoFf","method":"GET","path":"/ScriptResource.axd?d=yJfeaaHSeQ_C-usISYYG59KkFdMmZEZoFfYsWkxvOLylUB3ohmF7hQndntCQyvSW4SWzZiilhkCrms5CmIm8VkjQSbeBa7mRbhWT31qrhqyHm3ZOk7QqyCHc3_tlVJGJSHrhpghrAqQJLyxnz_WwOA2&t=23d42d05","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_7reVa4cpYf7F76iqi3c0ub0TncYUOR6dJ1","method":"GET","path":"/ScriptResource.axd?d=7reVa4cpYf7F76iqi3c0ub0TncYUOR6dJ143_ug73vLDk5P_p2e-CiXQbdzSjIaRDp8XLOOyrUoZQLvv4swX1pFLAb0ZU7t4v17EhEhCCVZsTtttinG5BDOkCXBHoTTfEm470WIymPhibpLsJNDocQ2&t=23d42d05","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _default_aspx","method":"POST","path":"/default.aspx","headers":{"Content-Type":"application/json"},"payload":"{\n  \"scriptManager_TSM\": \"\",\n  \"__EVENTTARGET\": \"btnLogin\",\n  \"__EVENTARGUMENT\": \"\",\n  \"__VIEWSTATE\": \"5TDhYaro7n7IXDKATRrQyaPTa6rQc9qBMYiryNCPD9JNEOgwaBXVzE87U2sTboaDlfixbJY7TiK07C4Srtjs20NJE7Jgh3f4XwAOg0FjOlytgI8+9rXT7di94SIz8ePrMlADQl0o+PGs+ls70XP2QaRwkVzT5O8akdT8zh5gr4oYrjumjSP4wPJezWEFuwheZLGAB+qHE6ZcU3vdo85Ets2oTJ5TILorToCrRpdZux3wlHgRLsQEXF7vsCKIvByAiW7cDOKLuyW2e/v1n7Sz/uEk5tqukY7OGTYP54lI5wenUJPO40s7MpjA/lLcv9WBSezp+g3jEEj0TP7RDVJfoZ08UiWdPbCLjh6g5xh4VmGcNC5Ix5Vsu8H/cWrmq8fgkrO95gI5grfu7EvQRpkl59/ZYVP0kSJH07ocDLAtuC1vETUJ8+fihKKsJT7U/YmKDUuEi7ghBdsyQV2fOkIb2SZzEkjHSk8z68O20X7VZr7mkN0A/akCXbuNwj1q53Kq\",\n  \"__VIEWSTATEGENERATOR\": \"CA0B0334\",\n  \"loginCsrfToken\": \"08f2e58c-9118-4940-ba92-9a9784351c96\",\n  \"showDomainRow\": \"False\",\n  \"txtUserName\": \"PerfUser1\",\n  \"txtUserName_ClientState\": \"{\\\"enabled\\\":true,\\\"emptyMessage\\\":\\\"\\\",\\\"validationText\\\":\\\"PerfUser1\\\",\\\"valueAsString\\\":\\\"PerfUser1\\\",\\\"lastSetTextBoxValue\\\":\\\"PerfUser1\\\"}\",\n  \"txtpassword\": \"Password123$\",\n  \"txtpassword_ClientState\": \"{\\\"enabled\\\":true,\\\"emptyMessage\\\":\\\"\\\",\\\"validationText\\\":\\\"Password123$\\\",\\\"valueAsString\\\":\\\"Password123$\\\",\\\"lastSetTextBoxValue\\\":\\\"Password123$\\\"}\"\n}","payloadType":"form","expectedStatus":302,"responseThresholdMs":500},{"name":"GET _apps_ArcherApp_Home_aspx","method":"GET","path":"/apps/ArcherApp/Home.aspx","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _extstyle_axd_p_OTE4NTAwNHx_L2FwcHMvQXJjaGVyQXBwL0hvbWUu","method":"GET","path":"/extstyle.axd?p=OTE4NTAwNHx-L2FwcHMvQXJjaGVyQXBwL0hvbWUuYXNweA2&t=1783926201871&ArcherVersion=6.16.300.10302-212121176DC2","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _WebResource_axd_d_pynGkmcFUV13He1Qd6_TZIxkEYB6RI1YIrETS","method":"GET","path":"/WebResource.axd?d=pynGkmcFUV13He1Qd6_TZIxkEYB6RI1YIrETSxN6NpxbZJgCpN-U6cquvI2s8idV8bACyTqrdS87eAmahfv7qg2&t=638901536248157332","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_NJmAwtEo3Ipnlaxl6CMhvmQiZnK9lqwXEZ","method":"GET","path":"/ScriptResource.axd?d=NJmAwtEo3Ipnlaxl6CMhvmQiZnK9lqwXEZ0Xg_YiWwygcUInIrDOIrj_dfqx6w610cO-DqpfwOKHirwLO_A0u_DsvCf4C3bLqB0YIUIGEYjJ_kKUXli_4mayySu4_lTxZqOMdD0wCQevUUsXDyLJRTEn8pNHZ08Qs0FIED3FpAY1&t=5c0e0825","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_dwY9oWetJoJoVpgL6Zq8OMUN48DIY0ZYOD","method":"GET","path":"/ScriptResource.axd?d=dwY9oWetJoJoVpgL6Zq8OMUN48DIY0ZYODLqlbV33aKuZfdVVVJWoI01SX3s_1CXNBiNgfc80Dul_rMchPOOtIHLerwuyDiJQ8x8mHXOHvZW6xvgp1HptNhZDUFjvdOntrL0yS2uOXtHcoGBy1H7qsCSNTfqcxdPn6M5QJi8_T41&t=5c0e0825","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_internal_Permission_GetModuleRecordAccess","method":"POST","path":"/api/internal/Permission/GetModuleRecordAccess","headers":{"x-http-method-override":"GET","Content-Type":"application/json"},"payload":"{\n  \"Value\": \"?&$filter=Type eq '2' and HasCreate eq true\"\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_internal_Permission_GetModuleRecordAccess","method":"POST","path":"/api/internal/Permission/GetModuleRecordAccess","headers":{"x-http-method-override":"GET","Content-Type":"application/json"},"payload":"{\n  \"Value\": \"?&$filter=Type eq '7' and HasCreate eq true\"\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_LookUp_node_root","method":"GET","path":"/api/V2/internal/LookUp?node=root","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerResources","method":"POST","path":"/api/V2/internal/ConsumerResources","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"value\": [\n    \"PlatformUi\",\n    \"MessageBox\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _plugins_json_id_1783926203424","method":"GET","path":"/plugins.json?id=1783926203424","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_Internal_SessionStates_Save","method":"POST","path":"/api/V2/Internal/SessionStates/Save","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"StateId\": null,\n  \"Url\": \"grcr/eyJ4dHlwZSI6ImxvYWRlciIsInBhY2thZ2VOYW1lIjoiUmVhY3RMb2FkZXIiLCJyb3V0ZSI6Ii90ZGxwIiwidGFza051bSI6IkFsbEFjY2Vzc1JvbGUifQ==\"\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"value\": [\n    \"Global\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"value\": [\n    \"Global\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_NavMenuWorkspaceDashboards_id_header_na","method":"GET","path":"/api/V2/internal/NavMenuWorkspaceDashboards?id=header.navigation.WorkspaceModel-1","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfile_7646__id_7646","method":"GET","path":"/api/V2/internal/UserProfile(7646)?id=7646","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_NavigationTopBar","method":"GET","path":"/api/V2/internal/NavigationTopBar","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"value\": [\n    \"Global\",\n    \"MainMenu\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_AppearanceThemes_GetActive","method":"GET","path":"/api/V2/internal/AppearanceThemes/GetActive","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_NavigationMenuWorkspaces","method":"GET","path":"/api/V2/internal/NavigationMenuWorkspaces","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfileImage","method":"GET","path":"/api/V2/internal/UserProfileImage","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_NavigationMenuWorkspaceDetails","method":"POST","path":"/api/V2/internal/NavigationMenuWorkspaceDetails","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"WorkspaceIds\": [\n    210\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_ui_","method":"GET","path":"/ngrx-ui/","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _apps_ArcherApp_ArcherApp_aspx","method":"GET","path":"/apps/ArcherApp/ArcherApp.aspx","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_metadata_ModuleMetadata_moduleIds_10162","method":"GET","path":"/ngrx/metadata/ModuleMetadata?moduleIds=10162","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"value\": [\n    \"Records\",\n    \"Global\",\n    \"ReactGrid\",\n    \"Emails\",\n    \"AdvancedFilter\",\n    \"UserProfile\",\n    \"Phones\",\n    \"MessageBox\",\n    \"DataFeeds\",\n    \"ArcherUploadModal\",\n    \"Applications\",\n    \"Search\",\n    \"GridPanel\",\n    \"PlatFormUI\",\n    \"DataImportWizard\",\n    \"RecordPage\",\n    \"MainMenu\",\n    \"BulkActionJobHistory\",\n    \"JobStatusReport\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_instance","method":"GET","path":"/ngrx/record/v1/instance","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _plugins_json_id_1783926215817","method":"GET","path":"/plugins.json?id=1783926215817","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_profile_ModulePermission_moduleId_10162_TaskClassT","method":"GET","path":"/ngrx/profile/ModulePermission?moduleId=10162&TaskClassTypes=ViewMode&TaskClassTypes=Export&TaskClassTypes=Schedule&TaskClassTypes=Print&TaskClassTypes=SaveReport&TaskClassTypes=Email&TaskClassTypes=BulkUpdate","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize","method":"GET","path":"/ngrx/search/results?viewType=NavMenu&pageNum=0&pageSize=0&solutionId=222&workspaceId=210&moduleId=10162&performFacetedSearch=false","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfile_7646__id_7646","method":"GET","path":"/api/V2/internal/UserProfile(7646)?id=7646","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_about_version_all","method":"GET","path":"/ngrx/record/v1/about/version/all","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"value\": [\n    \"Global\",\n    \"MainMenu\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_AppearanceThemes_GetActive","method":"GET","path":"/api/V2/internal/AppearanceThemes/GetActive","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfileImage","method":"GET","path":"/api/V2/internal/UserProfileImage","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_search_reportCriteria_default_moduleId_10162","method":"GET","path":"/ngrx/search/reportCriteria/default?moduleId=10162","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_search_results_0_facets","method":"POST","path":"/ngrx/search/results/0/facets","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"reportPayload\": {\n    \"reportCriteria\": {\n      \"reportType\": \"Table\",\n      \"criteria\": {\n        \"searchFilter\": null,\n        \"moduleCriteria\": {\n          \"id\": 0,\n          \"moduleId\": 10162,\n          \"levelIds\": [\n            12126\n          ],\n          \"keywordLevelIds\": [],\n          \"sortFields\": [],\n          \"isKeywordModule\": false,\n          \"buildoutRelationship\": \"Union\",\n          \"leveledBuildoutOptions\": null,\n          \"children\": []\n        },\n        \"keywords\": \"\",\n        \"contentIdLayerMapItems\": [],\n        \"searchDirection\": \"Both\"\n      },\n      \"showDateHeading\": false,\n      \"reportId\": 0,\n      \"maxRecordCount\": 0,\n      \"isResultLimitPercent\": false,\n      \"pageSize\": 50,\n      \"showCriteriaHeading\": false,\n      \"fixColumnHeaders\": false,\n      \"refreshRate\": null,\n      \"isHiddenFromMasterReportList\": false,\n      \"isHiddenFromIViews\": false,\n      \"isCachingEnabled\": false,\n      \"cacheDuration\": null,\n      \"calendarOptions\": {\n        \"calendarFields\": []\n      },\n      \"networkOptions\": null,\n      \"containedDisplayFields\": {},\n      \"displayFields\": [\n        60463\n      ],\n      \"displayFieldWidths\": [],\n      \"expandDetailViews\": false,\n      \"formatType\": \"Column\",\n      \"groupingFieldIds\": [],\n      \"mapOptions\": null,\n      \"mapboxOptions\": null,\n      \"calendarDisplayFormat\": 1,\n      \"isEditable\": true,\n      \"hierarchiesForField\": {},\n      \"isTrendingEnabled\": false\n    },\n    \"reportDetail\": {\n      \"guid\": \"67838ade-e7c3-455a-aa32-ff30f504811c\",\n      \"type\": \"SearchBased\",\n      \"description\": \"Display All\",\n      \"name\": \"Display All\",\n      \"asoStatus\": \"Normal\",\n      \"isHiddenFromMasterReportList\": false,\n      \"isHiddenFromIViews\": false,\n      \"languageId\": 1,\n      \"isSystem\": false,\n      \"reportType\": \"NavMenuItem\",\n      \"updateInformation\": {},\n      \"authorization\": {\n        \"users\": [],\n        \"groups\": []\n      }\n    }\n  }\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_modules_10162_levels","method":"GET","path":"/ngrx/record/v1/modules/10162/levels","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"value\": [\n    \"Records\",\n    \"Global\",\n    \"ReactGrid\",\n    \"Applications\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_profile_User_7646_additionalInfo","method":"GET","path":"/ngrx/profile/User/7646/additionalInfo","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126_data_driven_events","method":"GET","path":"/ngrx/record/v1/levels/12126/data-driven-events","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126","method":"GET","path":"/ngrx/record/v1/levels/12126","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126_advanced_workflow_configura","method":"GET","path":"/ngrx/record/v1/levels/12126/advanced-workflow-configuration","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v2_levels_12126_default_layout","method":"GET","path":"/ngrx/record/v2/levels/12126/default-layout","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126_image_fields","method":"GET","path":"/ngrx/record/v1/levels/12126/image-fields","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_modules_task_access_moduleIds_10162","method":"GET","path":"/ngrx/record/v1/modules/task-access?moduleIds=10162","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_record_v1_contents","method":"POST","path":"/ngrx/record/v1/contents","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"levelId\": 12126,\n  \"contentFields\": [\n    {\n      \"fieldId\": 60795,\n      \"value\": \"Nitesh Kishore Kashi\",\n      \"type\": \"Text\"\n    },\n    {\n      \"fieldId\": 60796,\n      \"value\": 35,\n      \"type\": \"Numeric\"\n    }\n  ],\n  \"version\": 0\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500,"producesVars":[{"token":"id1","jsonPath":"id"}]},{"name":"GET _ngrx_record_v1_levels_12126_advanced_workflow_configura","method":"GET","path":"/ngrx/record/v1/levels/12126/advanced-workflow-configuration","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v2_contents_786450_summary","method":"GET","path":"/ngrx/record/v2/contents/__CORR_id1_786450__/summary","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126","method":"GET","path":"/ngrx/record/v1/levels/12126","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_contents_786450","method":"GET","path":"/ngrx/record/v1/contents/__CORR_id1_786450__","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_record_v1_levels_12126_contents_786450_history","method":"POST","path":"/ngrx/record/v1/levels/12126/contents/__CORR_id1_786450__/history","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_contents_786450_data_driven_events","method":"GET","path":"/ngrx/record/v1/contents/__CORR_id1_786450__/data-driven-events","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_contents_786450_layout","method":"GET","path":"/ngrx/record/v1/contents/__CORR_id1_786450__/layout","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"PUT _ngrx_record_v1_contents_786450_acquire_lock","method":"PUT","path":"/ngrx/record/v1/contents/__CORR_id1_786450__/acquire-lock","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"DELETE _ngrx_record_v1_contents_786450","method":"DELETE","path":"/ngrx/record/v1/contents/__CORR_id1_786450__","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"PATCH _ngrx_record_v1_contents_786450_release_lock","method":"PATCH","path":"/ngrx/record/v1/contents/__CORR_id1_786450__/release-lock","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_metadata_ModuleMetadata_moduleIds_10162","method":"GET","path":"/ngrx/metadata/ModuleMetadata?moduleIds=10162","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_search_reportCriteria_default_moduleId_10162","method":"GET","path":"/ngrx/search/reportCriteria/default?moduleId=10162","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize","method":"GET","path":"/ngrx/search/results?viewType=NavMenu&pageNum=0&pageSize=0&solutionId=222&workspaceId=210&moduleId=10162&performFacetedSearch=false","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_search_results","method":"POST","path":"/ngrx/search/results","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"reportPayload\": {\n    \"reportDetail\": {\n      \"guid\": \"04b3feea-3b7f-46c7-99d1-df6310404e26\",\n      \"type\": \"SearchBased\",\n      \"description\": \"\",\n      \"name\": \"\",\n      \"pageId\": 9248,\n      \"asoStatus\": \"Normal\",\n      \"languageId\": 1,\n      \"isSystem\": false,\n      \"reportType\": \"Global\",\n      \"updateInformation\": {},\n      \"authorization\": {\n        \"users\": [],\n        \"groups\": []\n      }\n    },\n    \"reportCriteria\": {\n      \"reportType\": \"Table\",\n      \"criteria\": {\n        \"searchFilter\": null,\n        \"moduleCriteria\": {\n          \"id\": 0,\n          \"moduleId\": 10162,\n          \"levelIds\": [\n            12126\n          ],\n          \"keywordLevelIds\": [],\n          \"sortFields\": [\n            {\n              \"fieldId\": 60463,\n              \"sortType\": \"Ascending\"\n            }\n          ],\n          \"isKeywordModule\": true,\n          \"buildoutRelationship\": \"Union\",\n          \"leveledBuildoutOptions\": null,\n          \"children\": []\n        },\n        \"keywords\": \"\",\n        \"contentIdLayerMapItems\": [],\n        \"searchDirection\": \"Both\"\n      },\n      \"showDateHeading\": false,\n      \"reportId\": 0,\n      \"maxRecordCount\": 0,\n      \"isResultLimitPercent\": false,\n      \"pageSize\": 50,\n      \"showCriteriaHeading\": false,\n      \"fixColumnHeaders\": false,\n      \"refreshRate\": null,\n      \"isHiddenFromMasterReportList\": false,\n      \"isHiddenFromIViews\": false,\n      \"isCachingEnabled\": false,\n      \"cacheDuration\": null,\n      \"calendarOptions\": null,\n      \"networkOptions\": null,\n      \"containedDisplayFields\": {},\n      \"displayFields\": [\n        60463\n      ],\n      \"displayFieldWidths\": [],\n      \"expandDetailViews\": false,\n      \"formatType\": \"Column\",\n      \"groupingFieldIds\": [],\n      \"mapOptions\": null,\n      \"mapboxOptions\": null,\n      \"calendarDisplayFormat\": 1,\n      \"isEditable\": true,\n      \"hierarchiesForField\": {},\n      \"isTrendingEnabled\": false\n    }\n  },\n  \"pageNum\": 0,\n  \"pageSize\": 50,\n  \"performFacetedSearch\": false\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_search_results_0_facets","method":"POST","path":"/ngrx/search/results/0/facets","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"reportPayload\": {\n    \"reportDetail\": {\n      \"guid\": \"04b3feea-3b7f-46c7-99d1-df6310404e26\",\n      \"type\": \"SearchBased\",\n      \"description\": \"\",\n      \"name\": \"\",\n      \"pageId\": 9248,\n      \"asoStatus\": \"Normal\",\n      \"languageId\": 1,\n      \"isSystem\": false,\n      \"reportType\": \"Global\",\n      \"updateInformation\": {},\n      \"authorization\": {\n        \"users\": [],\n        \"groups\": []\n      }\n    },\n    \"reportCriteria\": {\n      \"reportType\": \"Table\",\n      \"criteria\": {\n        \"searchFilter\": null,\n        \"moduleCriteria\": {\n          \"id\": 0,\n          \"moduleId\": 10162,\n          \"levelIds\": [\n            12126\n          ],\n          \"keywordLevelIds\": [],\n          \"sortFields\": [\n            {\n              \"fieldId\": 60463,\n              \"sortType\": \"Ascending\"\n            }\n          ],\n          \"isKeywordModule\": true,\n          \"buildoutRelationship\": \"Union\",\n          \"leveledBuildoutOptions\": null,\n          \"children\": []\n        },\n        \"keywords\": \"\",\n        \"contentIdLayerMapItems\": [],\n        \"searchDirection\": \"Both\"\n      },\n      \"showDateHeading\": false,\n      \"reportId\": 0,\n      \"maxRecordCount\": 0,\n      \"isResultLimitPercent\": false,\n      \"pageSize\": 50,\n      \"showCriteriaHeading\": false,\n      \"fixColumnHeaders\": false,\n      \"refreshRate\": null,\n      \"isHiddenFromMasterReportList\": false,\n      \"isHiddenFromIViews\": false,\n      \"isCachingEnabled\": false,\n      \"cacheDuration\": null,\n      \"calendarOptions\": null,\n      \"networkOptions\": null,\n      \"containedDisplayFields\": {},\n      \"displayFields\": [\n        60463\n      ],\n      \"displayFieldWidths\": [],\n      \"expandDetailViews\": false,\n      \"formatType\": \"Column\",\n      \"groupingFieldIds\": [],\n      \"mapOptions\": null,\n      \"mapboxOptions\": null,\n      \"calendarDisplayFormat\": 1,\n      \"isEditable\": true,\n      \"hierarchiesForField\": {},\n      \"isTrendingEnabled\": false\n    }\n  }\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_search_results","method":"POST","path":"/ngrx/search/results","headers":{"Content-Type":"application/json","x-csrf-token":"xbXHtrqFDUcyPm16D7sCvFyP_io--NMcrzJFdHtKqu33e9oTs7moktpA82txRO2w_0L1yQ-OB2jo0Um8gQ1GP5rZ8sKMukI-0VOGOsZHeUY1"},"payload":"{\n  \"reportPayload\": {\n    \"reportDetail\": {\n      \"guid\": \"04b3feea-3b7f-46c7-99d1-df6310404e26\",\n      \"type\": \"SearchBased\",\n      \"description\": \"\",\n      \"name\": \"\",\n      \"pageId\": 9248,\n      \"asoStatus\": \"Normal\",\n      \"languageId\": 1,\n      \"isSystem\": false,\n      \"reportType\": \"Global\",\n      \"updateInformation\": {},\n      \"authorization\": {\n        \"users\": [],\n        \"groups\": []\n      }\n    },\n    \"reportCriteria\": {\n      \"reportType\": \"Table\",\n      \"criteria\": {\n        \"searchFilter\": null,\n        \"moduleCriteria\": {\n          \"id\": 0,\n          \"moduleId\": 10162,\n          \"levelIds\": [\n            12126\n          ],\n          \"keywordLevelIds\": [],\n          \"sortFields\": [\n            {\n              \"fieldId\": 60463,\n              \"sortType\": \"Ascending\"\n            }\n          ],\n          \"isKeywordModule\": true,\n          \"buildoutRelationship\": \"Union\",\n          \"leveledBuildoutOptions\": null,\n          \"children\": []\n        },\n        \"keywords\": \"\",\n        \"contentIdLayerMapItems\": [],\n        \"searchDirection\": \"Both\"\n      },\n      \"showDateHeading\": false,\n      \"reportId\": 0,\n      \"maxRecordCount\": 0,\n      \"isResultLimitPercent\": false,\n      \"pageSize\": 50,\n      \"showCriteriaHeading\": false,\n      \"fixColumnHeaders\": false,\n      \"refreshRate\": null,\n      \"isHiddenFromMasterReportList\": false,\n      \"isHiddenFromIViews\": false,\n      \"isCachingEnabled\": false,\n      \"cacheDuration\": null,\n      \"calendarOptions\": null,\n      \"networkOptions\": null,\n      \"containedDisplayFields\": {},\n      \"displayFields\": [\n        60463\n      ],\n      \"displayFieldWidths\": [],\n      \"expandDetailViews\": false,\n      \"formatType\": \"Column\",\n      \"groupingFieldIds\": [],\n      \"mapOptions\": null,\n      \"mapboxOptions\": null,\n      \"calendarDisplayFormat\": 1,\n      \"isEditable\": true,\n      \"hierarchiesForField\": {},\n      \"isTrendingEnabled\": false\n    }\n  },\n  \"pageNum\": 0,\n  \"pageSize\": 50,\n  \"performFacetedSearch\": false\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500}];
 
-const CAPTURED_REQUESTS = [{"name":"GET _default_aspx","method":"GET","path":"/default.aspx","headers":{"accept":"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=0, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _StyleResourceHandler_axd_p_fH4vZGVmYXVsdC5hc3B40_t_6391","method":"GET","path":"/StyleResourceHandler.axd?p=fH4vZGVmYXVsdC5hc3B40&t=639195229846619884&ArcherVersion=c3cb260b3e5a5591a6f1c6c5d0191df391f13bc22729d2740de02c612531d0f4","headers":{"accept":"text/css,*/*;q=0.1","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=0","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _WebResource_axd_d_pynGkmcFUV13He1Qd6_TZIxkEYB6RI1YIrETS","method":"GET","path":"/WebResource.axd?d=pynGkmcFUV13He1Qd6_TZIxkEYB6RI1YIrETSxN6NpxbZJgCpN-U6cquvI2s8idV8bACyTqrdS87eAmahfv7qg2&t=638901536248157332","headers":{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_NJmAwtEo3Ipnlaxl6CMhvmQiZnK9lqwXEZ","method":"GET","path":"/ScriptResource.axd?d=NJmAwtEo3Ipnlaxl6CMhvmQiZnK9lqwXEZ0Xg_YiWwygcUInIrDOIrj_dfqx6w610cO-DqpfwOKHirwLO_A0u_DsvCf4C3bLqB0YIUIGEYjJ_kKUXli_4mayySu4_lTxZqOMdD0wCQevUUsXDyLJRTEn8pNHZ08Qs0FIED3FpAY1&t=5c0e0825","headers":{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_dwY9oWetJoJoVpgL6Zq8OMUN48DIY0ZYOD","method":"GET","path":"/ScriptResource.axd?d=dwY9oWetJoJoVpgL6Zq8OMUN48DIY0ZYODLqlbV33aKuZfdVVVJWoI01SX3s_1CXNBiNgfc80Dul_rMchPOOtIHLerwuyDiJQ8x8mHXOHvZW6xvgp1HptNhZDUFjvdOntrL0yS2uOXtHcoGBy1H7qsCSNTfqcxdPn6M5QJi8_T41&t=5c0e0825","headers":{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_VL_I2BbK22NYeoOk7XFelnZjZaG5gBciBm","method":"GET","path":"/ScriptResource.axd?d=VL_I2BbK22NYeoOk7XFelnZjZaG5gBciBmBe2CBwyV7Wo5HM8EPcAWyIkdgGXg7ozkBbCqonv7jFyamcgT11kZpotCQ60OKK61bTaWOuip2JEhsrb_LEvxGjNG53GZCJEmh1kvXGTfnc4VbTfv4xDA2&t=23d42d05","headers":{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_yJfeaaHSeQ_C_usISYYG59KkFdMmZEZoFf","method":"GET","path":"/ScriptResource.axd?d=yJfeaaHSeQ_C-usISYYG59KkFdMmZEZoFfYsWkxvOLylUB3ohmF7hQndntCQyvSW4SWzZiilhkCrms5CmIm8VkjQSbeBa7mRbhWT31qrhqyHm3ZOk7QqyCHc3_tlVJGJSHrhpghrAqQJLyxnz_WwOA2&t=23d42d05","headers":{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_7reVa4cpYf7F76iqi3c0ub0TncYUOR6dJ1","method":"GET","path":"/ScriptResource.axd?d=7reVa4cpYf7F76iqi3c0ub0TncYUOR6dJ143_ug73vLDk5P_p2e-CiXQbdzSjIaRDp8XLOOyrUoZQLvv4swX1pFLAb0ZU7t4v17EhEhCCVZsTtttinG5BDOkCXBHoTTfEm470WIymPhibpLsJNDocQ2&t=23d42d05","headers":{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _default_aspx","method":"POST","path":"/default.aspx","headers":{"accept":"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"1191","content-type":"application/x-www-form-urlencoded","priority":"u=0, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":"{\n \"scriptManager_TSM\": \"\",\n \"__EVENTTARGET\": \"btnLogin\",\n \"__EVENTARGUMENT\": \"\",\n \"__VIEWSTATE\": \"5TDhYaro7n7IXDKATRrQyaPTa6rQc9qBMYiryNCPD9JNEOgwaBXVzE87U2sTboaDlfixbJY7TiK07C4Srtjs20NJE7Jgh3f4XwAOg0FjOlytgI8+9rXT7di94SIz8ePrMlADQl0o+PGs+ls70XP2QaRwkVzT5O8akdT8zh5gr4oYrjumjSP4wPJezWEFuwheZLGAB+qHE6ZcU3vdo85Ets2oTJ5TILorToCrRpdZux3wlHgRLsQEXF7vsCKIvByAiW7cDOKLuyW2e/v1n7Sz/uEk5tqukY7OGTYP54lI5wenUJPO40s7MpjA/lLcv9WBSezp+g3jEEj0TP7RDVJfoZ08UiWdPbCLjh6g5xh4VmGcNC5Ix5Vsu8H/cWrmq8fgkrO95gI5grfu7EvQRpkl59/ZYVP0kSJH07ocDLAtuC1vETUJ8+fihKKsJT7U/YmKDUuEi7ghBdsyQV2fOkIb2SZzEkjHSk8z68O20X7VZr7mkN0A/akCXbuNwj1q53Kq\",\n \"__VIEWSTATEGENERATOR\": \"CA0B0334\",\n \"loginCsrfToken\": \"08f2e58c-9118-4940-ba92-9a9784351c96\",\n \"showDomainRow\": \"False\",\n \"txtUserName\": \"PerfUser1\",\n \"txtUserName_ClientState\": \"{\\\"enabled\\\":true,\\\"emptyMessage\\\":\\\"\\\",\\\"validationText\\\":\\\"PerfUser1\\\",\\\"valueAsString\\\":\\\"PerfUser1\\\",\\\"lastSetTextBoxValue\\\":\\\"PerfUser1\\\"}\",\n \"txtpassword\": \"Password123$\",\n \"txtpassword_ClientState\": \"{\\\"enabled\\\":true,\\\"emptyMessage\\\":\\\"\\\",\\\"validationText\\\":\\\"Password123$\\\",\\\"valueAsString\\\":\\\"Password123$\\\",\\\"lastSetTextBoxValue\\\":\\\"Password123$\\\"}\"\n}","payloadType":"form","expectedStatus":302,"responseThresholdMs":500},{"name":"GET _apps_ArcherApp_Home_aspx","method":"GET","path":"/apps/ArcherApp/Home.aspx","headers":{"accept":"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=0, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _extstyle_axd_p_OTE4NTAwNHx_L2FwcHMvQXJjaGVyQXBwL0hvbWUu","method":"GET","path":"/extstyle.axd?p=OTE4NTAwNHx-L2FwcHMvQXJjaGVyQXBwL0hvbWUuYXNweA2&t=1783926201871&ArcherVersion=6.16.300.10302-212121176DC2","headers":{"accept":"text/css,*/*;q=0.1","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=0","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _WebResource_axd_d_pynGkmcFUV13He1Qd6_TZIxkEYB6RI1YIrETS","method":"GET","path":"/WebResource.axd?d=pynGkmcFUV13He1Qd6_TZIxkEYB6RI1YIrETSxN6NpxbZJgCpN-U6cquvI2s8idV8bACyTqrdS87eAmahfv7qg2&t=638901536248157332","headers":{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_NJmAwtEo3Ipnlaxl6CMhvmQiZnK9lqwXEZ","method":"GET","path":"/ScriptResource.axd?d=NJmAwtEo3Ipnlaxl6CMhvmQiZnK9lqwXEZ0Xg_YiWwygcUInIrDOIrj_dfqx6w610cO-DqpfwOKHirwLO_A0u_DsvCf4C3bLqB0YIUIGEYjJ_kKUXli_4mayySu4_lTxZqOMdD0wCQevUUsXDyLJRTEn8pNHZ08Qs0FIED3FpAY1&t=5c0e0825","headers":{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ScriptResource_axd_d_dwY9oWetJoJoVpgL6Zq8OMUN48DIY0ZYOD","method":"GET","path":"/ScriptResource.axd?d=dwY9oWetJoJoVpgL6Zq8OMUN48DIY0ZYODLqlbV33aKuZfdVVVJWoI01SX3s_1CXNBiNgfc80Dul_rMchPOOtIHLerwuyDiJQ8x8mHXOHvZW6xvgp1HptNhZDUFjvdOntrL0yS2uOXtHcoGBy1H7qsCSNTfqcxdPn6M5QJi8_T41&t=5c0e0825","headers":{"User-Agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_internal_Permission_GetModuleRecordAccess","method":"POST","path":"/api/internal/Permission/GetModuleRecordAccess","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"55","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,OData","x-http-method-override":"GET","x-requested-with":"XMLHttpRequest"},"payload":"{\n \"Value\": \"?&$filter=Type eq '2' and HasCreate eq true\"\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_internal_Permission_GetModuleRecordAccess","method":"POST","path":"/api/internal/Permission/GetModuleRecordAccess","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"55","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,OData","x-http-method-override":"GET","x-requested-with":"XMLHttpRequest"},"payload":"{\n \"Value\": \"?&$filter=Type eq '7' and HasCreate eq true\"\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_LookUp_node_root","method":"GET","path":"/api/V2/internal/LookUp?node=root","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-requested-with":"XMLHttpRequest"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerResources","method":"POST","path":"/api/V2/internal/ConsumerResources","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"37","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,ConsumerResources","x-requested-with":"XMLHttpRequest"},"payload":"{\n \"value\": [\n \"PlatformUi\",\n \"MessageBox\"\n ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _plugins_json_id_1783926203424","method":"GET","path":"/plugins.json?id=1783926203424","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_Internal_SessionStates_Save","method":"POST","path":"/api/V2/Internal/SessionStates/Save","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"150","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,SessionState","x-requested-with":"XMLHttpRequest"},"payload":"{\n \"StateId\": null,\n \"Url\": \"grcr/eyJ4dHlwZSI6ImxvYWRlciIsInBhY2thZ2VOYW1lIjoiUmVhY3RMb2FkZXIiLCJyb3V0ZSI6Ii90ZGxwIiwidGFza051bSI6IkFsbEFjY2Vzc1JvbGUifQ==\"\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"20","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Translations"},"payload":"{\n \"value\": [\n \"Global\"\n ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"20","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Translations"},"payload":"{\n \"value\": [\n \"Global\"\n ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_NavMenuWorkspaceDashboards_id_header_na","method":"GET","path":"/api/V2/internal/NavMenuWorkspaceDashboards?id=header.navigation.WorkspaceModel-1","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-type":"application/json","priority":"u=1, i","rsa-archer-sessioncontext-translate":"true","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,TDLP"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfile_7646__id_7646","method":"GET","path":"/api/V2/internal/UserProfile(7646)?id=7646","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_NavigationTopBar","method":"GET","path":"/api/V2/internal/NavigationTopBar","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Navigation"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"31","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Navigation"},"payload":"{\n \"value\": [\n \"Global\",\n \"MainMenu\"\n ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_AppearanceThemes_GetActive","method":"GET","path":"/api/V2/internal/AppearanceThemes/GetActive","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Navigation"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_NavigationMenuWorkspaces","method":"GET","path":"/api/V2/internal/NavigationMenuWorkspaces","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Navigation"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfileImage","method":"GET","path":"/api/V2/internal/UserProfileImage","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Navigation"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_NavigationMenuWorkspaceDetails","method":"POST","path":"/api/V2/internal/NavigationMenuWorkspaceDetails","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"22","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Navigation"},"payload":"{\n \"WorkspaceIds\": [\n 210\n ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_ui_","method":"GET","path":"/ngrx-ui/","headers":{"accept":"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=0, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _apps_ArcherApp_ArcherApp_aspx","method":"GET","path":"/apps/ArcherApp/ArcherApp.aspx","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_metadata_ModuleMetadata_moduleIds_10162","method":"GET","path":"/ngrx/metadata/ModuleMetadata?moduleIds=10162","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"269","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":"{\n \"value\": [\n \"Records\",\n \"Global\",\n \"ReactGrid\",\n \"Emails\",\n \"AdvancedFilter\",\n \"UserProfile\",\n \"Phones\",\n \"MessageBox\",\n \"DataFeeds\",\n \"ArcherUploadModal\",\n \"Applications\",\n \"Search\",\n \"GridPanel\",\n \"PlatFormUI\",\n \"DataImportWizard\",\n \"RecordPage\",\n \"MainMenu\",\n \"BulkActionJobHistory\",\n \"JobStatusReport\"\n ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_instance","method":"GET","path":"/ngrx/record/v1/instance","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _plugins_json_id_1783926215817","method":"GET","path":"/plugins.json?id=1783926215817","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_profile_ModulePermission_moduleId_10162_TaskClassT","method":"GET","path":"/ngrx/profile/ModulePermission?moduleId=10162&TaskClassTypes=ViewMode&TaskClassTypes=Export&TaskClassTypes=Schedule&TaskClassTypes=Print&TaskClassTypes=SaveReport&TaskClassTypes=Email&TaskClassTypes=BulkUpdate","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize","method":"GET","path":"/ngrx/search/results?viewType=NavMenu&pageNum=0&pageSize=0&solutionId=222&workspaceId=210&moduleId=10162&performFacetedSearch=false","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfile_7646__id_7646","method":"GET","path":"/api/V2/internal/UserProfile(7646)?id=7646","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_about_version_all","method":"GET","path":"/ngrx/record/v1/about/version/all","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"31","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Navigation"},"payload":"{\n \"value\": [\n \"Global\",\n \"MainMenu\"\n ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_AppearanceThemes_GetActive","method":"GET","path":"/api/V2/internal/AppearanceThemes/GetActive","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Navigation"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfileImage","method":"GET","path":"/api/V2/internal/UserProfileImage","headers":{"accept":"*/*","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","x-archer-source":"Archer,Navigation"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_search_reportCriteria_default_moduleId_10162","method":"GET","path":"/ngrx/search/reportCriteria/default?moduleId=10162","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_search_results_0_facets","method":"POST","path":"/ngrx/search/results/0/facets","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"1321","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":"{\n \"reportPayload\": {\n \"reportCriteria\": {\n \"reportType\": \"Table\",\n \"criteria\": {\n \"searchFilter\": null,\n \"moduleCriteria\": {\n \"id\": 0,\n \"moduleId\": 10162,\n \"levelIds\": [\n 12126\n ],\n \"keywordLevelIds\": [],\n \"sortFields\": [],\n \"isKeywordModule\": false,\n \"buildoutRelationship\": \"Union\",\n \"leveledBuildoutOptions\": null,\n \"children\": []\n },\n \"keywords\": \"\",\n \"contentIdLayerMapItems\": [],\n \"searchDirection\": \"Both\"\n },\n \"showDateHeading\": false,\n \"reportId\": 0,\n \"maxRecordCount\": 0,\n \"isResultLimitPercent\": false,\n \"pageSize\": 50,\n \"showCriteriaHeading\": false,\n \"fixColumnHeaders\": false,\n \"refreshRate\": null,\n \"isHiddenFromMasterReportList\": false,\n \"isHiddenFromIViews\": false,\n \"isCachingEnabled\": false,\n \"cacheDuration\": null,\n \"calendarOptions\": {\n \"calendarFields\": []\n },\n \"networkOptions\": null,\n \"containedDisplayFields\": {},\n \"displayFields\": [\n 60463\n ],\n \"displayFieldWidths\": [],\n \"expandDetailViews\": false,\n \"formatType\": \"Column\",\n \"groupingFieldIds\": [],\n \"mapOptions\": null,\n \"mapboxOptions\": null,\n \"calendarDisplayFormat\": 1,\n \"isEditable\": true,\n \"hierarchiesForField\": {},\n \"isTrendingEnabled\": false\n },\n \"reportDetail\": {\n \"guid\": \"67838ade-e7c3-455a-aa32-ff30f504811c\",\n \"type\": \"SearchBased\",\n \"description\": \"Display All\",\n \"name\": \"Display All\",\n \"asoStatus\": \"Normal\",\n \"isHiddenFromMasterReportList\": false,\n \"isHiddenFromIViews\": false,\n \"languageId\": 1,\n \"isSystem\": false,\n \"reportType\": \"NavMenuItem\",\n \"updateInformation\": {},\n \"authorization\": {\n \"users\": [],\n \"groups\": []\n }\n }\n }\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_modules_10162_levels","method":"GET","path":"/ngrx/record/v1/modules/10162/levels","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"57","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":"{\n \"value\": [\n \"Records\",\n \"Global\",\n \"ReactGrid\",\n \"Applications\"\n ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_profile_User_7646_additionalInfo","method":"GET","path":"/ngrx/profile/User/7646/additionalInfo","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126_data_driven_events","method":"GET","path":"/ngrx/record/v1/levels/12126/data-driven-events","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126","method":"GET","path":"/ngrx/record/v1/levels/12126","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126_advanced_workflow_configura","method":"GET","path":"/ngrx/record/v1/levels/12126/advanced-workflow-configuration","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-type":"application/json; charset=UTF-8","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v2_levels_12126_default_layout","method":"GET","path":"/ngrx/record/v2/levels/12126/default-layout","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126_image_fields","method":"GET","path":"/ngrx/record/v1/levels/12126/image-fields","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_modules_task_access_moduleIds_10162","method":"GET","path":"/ngrx/record/v1/modules/task-access?moduleIds=10162","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_record_v1_contents","method":"POST","path":"/ngrx/record/v1/contents","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"156","content-type":"application/json; charset=UTF-8","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":"{\n \"levelId\": 12126,\n \"contentFields\": [\n {\n \"fieldId\": 60795,\n \"value\": \"Nitesh Kishore Kashi\",\n \"type\": \"Text\"\n },\n {\n \"fieldId\": 60796,\n \"value\": 35,\n \"type\": \"Numeric\"\n }\n ],\n \"version\": 0\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126_advanced_workflow_configura","method":"GET","path":"/ngrx/record/v1/levels/12126/advanced-workflow-configuration","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-type":"application/json; charset=UTF-8","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v2_contents_786450_summary","method":"GET","path":"/ngrx/record/v2/contents/786450/summary","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_levels_12126","method":"GET","path":"/ngrx/record/v1/levels/12126","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_contents_786450","method":"GET","path":"/ngrx/record/v1/contents/786450","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_record_v1_levels_12126_contents_786450_history","method":"POST","path":"/ngrx/record/v1/levels/12126/contents/786450/history","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36","content-length":"0","content-type":"application/json; charset=UTF-8"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_contents_786450_data_driven_events","method":"GET","path":"/ngrx/record/v1/contents/786450/data-driven-events","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_record_v1_contents_786450_layout","method":"GET","path":"/ngrx/record/v1/contents/786450/layout","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"PUT _ngrx_record_v1_contents_786450_acquire_lock","method":"PUT","path":"/ngrx/record/v1/contents/786450/acquire-lock","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"0","content-type":"application/json; charset=UTF-8","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"DELETE _ngrx_record_v1_contents_786450","method":"DELETE","path":"/ngrx/record/v1/contents/786450","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"PATCH _ngrx_record_v1_contents_786450_release_lock","method":"PATCH","path":"/ngrx/record/v1/contents/786450/release-lock","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-type":"application/json; charset=UTF-8","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_metadata_ModuleMetadata_moduleIds_10162","method":"GET","path":"/ngrx/metadata/ModuleMetadata?moduleIds=10162","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_search_reportCriteria_default_moduleId_10162","method":"GET","path":"/ngrx/search/reportCriteria/default?moduleId=10162","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _ngrx_search_results_viewType_NavMenu_pageNum_0_pageSize","method":"GET","path":"/ngrx/search/results?viewType=NavMenu&pageNum=0&pageSize=0&solutionId=222&workspaceId=210&moduleId=10162&performFacetedSearch=false","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_search_results","method":"POST","path":"/ngrx/search/results","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"1321","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":"{\n \"reportPayload\": {\n \"reportDetail\": {\n \"guid\": \"04b3feea-3b7f-46c7-99d1-df6310404e26\",\n \"type\": \"SearchBased\",\n \"description\": \"\",\n \"name\": \"\",\n \"pageId\": 9248,\n \"asoStatus\": \"Normal\",\n \"languageId\": 1,\n \"isSystem\": false,\n \"reportType\": \"Global\",\n \"updateInformation\": {},\n \"authorization\": {\n \"users\": [],\n \"groups\": []\n }\n },\n \"reportCriteria\": {\n \"reportType\": \"Table\",\n \"criteria\": {\n \"searchFilter\": null,\n \"moduleCriteria\": {\n \"id\": 0,\n \"moduleId\": 10162,\n \"levelIds\": [\n 12126\n ],\n \"keywordLevelIds\": [],\n \"sortFields\": [\n {\n \"fieldId\": 60463,\n \"sortType\": \"Ascending\"\n }\n ],\n \"isKeywordModule\": true,\n \"buildoutRelationship\": \"Union\",\n \"leveledBuildoutOptions\": null,\n \"children\": []\n },\n \"keywords\": \"\",\n \"contentIdLayerMapItems\": [],\n \"searchDirection\": \"Both\"\n },\n \"showDateHeading\": false,\n \"reportId\": 0,\n \"maxRecordCount\": 0,\n \"isResultLimitPercent\": false,\n \"pageSize\": 50,\n \"showCriteriaHeading\": false,\n \"fixColumnHeaders\": false,\n \"refreshRate\": null,\n \"isHiddenFromMasterReportList\": false,\n \"isHiddenFromIViews\": false,\n \"isCachingEnabled\": false,\n \"cacheDuration\": null,\n \"calendarOptions\": null,\n \"networkOptions\": null,\n \"containedDisplayFields\": {},\n \"displayFields\": [\n 60463\n ],\n \"displayFieldWidths\": [],\n \"expandDetailViews\": false,\n \"formatType\": \"Column\",\n \"groupingFieldIds\": [],\n \"mapOptions\": null,\n \"mapboxOptions\": null,\n \"calendarDisplayFormat\": 1,\n \"isEditable\": true,\n \"hierarchiesForField\": {},\n \"isTrendingEnabled\": false\n }\n },\n \"pageNum\": 0,\n \"pageSize\": 50,\n \"performFacetedSearch\": false\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _ngrx_search_results_0_facets","method":"POST","path":"/ngrx/search/results/0/facets","headers":{"accept":"application/json","accept-encoding":"gzip, deflate, br, zstd","accept-language":"en-US,en;q=0.9","content-length":"1266","content-type":"application/json","priority":"u=1, i","user-agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"},"payload":"{\n \"reportPayload\": {\n \"reportDetail\": {\n \"guid\": \"04b3feea-3b7f-46c7-99d1-df6310404e26\",\n \"type\": \"SearchBased\",\n \"description\": \"\",\n \"name\": \"\",\n \"pageId\": 9248,\n \"asoStatus\": \"Normal\",\n \"languageId\": 1,\n \"isSystem\": false,\n \"reportType\": \"Global\",\n \"updateInformation\": {},\n \"authorization\": {\n \"users\": [],\n \"groups\": []\n }\n },\n \"reportCriteria\": {\n \"reportType\": \"Table\",\n \"criteria\": {\n \"searchFilter\": null,\n \"moduleCriteria\": {\n \"id\": 0,\n \"moduleId\": 10162,\n \"levelIds\": [\n 12126\n ],\n \"keywordLevelIds\": [],\n \"sortFields\": [\n {\n \"fieldId\": 60463,\n \"sortType\": \"Ascending\"\n }\n ],\n \"isKeywordModule\": true,\n \"buildoutRelationship\": \"Union\",\n \"leveledBuildoutOptions\": null,\n \"children\": []\n },\n \"keywords\": \"\",\n \"contentIdLayerMapItems\": [],\n \"searchDirection\": \"Both\"\n },\n \"showDateHeading\": false,\n \"reportId\": 0,\n \"maxRecordCount\": 0,\n \"isResultLimitPercent\": false,\n \"pageSize\": 50,\n \"showCriteriaHeading\": false,\n \"fixColumnHeaders\": false,\n \"refreshRate\": null,\n \"isHiddenFromMasterReportList\": false,\n \"isHiddenFromIViews\": false,\n \"isCachingEnabled\": false,\n \"cacheDuration\": null,\n \"calendarOptions\": null,\n \"networkOptions\": null,\n \"containedDisplayFields\": {},\n \"displayFields\": [\n 60463\n ],\n \"displayFieldWidths\": [],\n \"expandDetailViews\": false,\n \"formatType\": \"Column\",\n \"groupingFieldIds\": [],\n \"mapOptions\": null,\n \"mapboxOptions\": null,\n \"calendarDisplayFormat\": 1,\n \"isEditable\": true,\n \"hierarchiesForField\": {},\n \"isTrendingEnabled\": false\n }\n }\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500}];
+
 
 const TEST_ID = __ENV.TESTID || ('local-' + Date.now());
 const RUN_ID = __ENV.RUN_ID || ('PerfOps-' + Date.now());
 const NODE_NAME = __ENV.NODE_NAME || 'PerfOps';
-const TEST_NAME = __ENV.TEST_NAME || 'Archer App Session Replay';
+const TEST_NAME = __ENV.TEST_NAME || 'Archer Classic Session Replay';
 const BASE_URL = __ENV.BASE_URL || 'https://9185004.classic-dev.internal.archerirm.net';
 const INFLUX_V2_URL = __ENV.INFLUX_V2_URL || 'http://localhost:8086';
 const INFLUX_V2_ORG = __ENV.INFLUX_V2_ORG || '';
@@ -24,7 +20,15 @@ const INFLUX_V2_TOKEN = __ENV.INFLUX_V2_TOKEN || '';
 const INFLUX_V2_AUTO_CREATE_BUCKET = (__ENV.INFLUX_V2_AUTO_CREATE_BUCKET || 'false').toLowerCase() === 'true';
 const INFLUX_V2_ENABLED = !!(INFLUX_V2_ORG && INFLUX_V2_BUCKET && INFLUX_V2_TOKEN);
 
+const CREDENTIALS = [{"loginUrl":"https://9185004.classic-dev.internal.archerirm.net/api/core/security/login","username":"Sohrab","password":"Password123$","instanceName":"9185004"}];
+// Each entry has the shape: { loginUrl, username, password, instanceName } —
+// these come verbatim from the uploaded CSV's URL / Username / Password /
+// InstanceName columns. InstanceName is REQUIRED by the login API (Archer IRM
+// throws ArgumentNullException: request.Credentials.InstanceName when it is
+// missing/null) — every row in the CSV must supply a non-empty value.
+
 const SCENARIO_NAME = 'archer_session_replay';
+const TEST_NAME_SCENARIO = TEST_NAME;
 
 const k6HttpReqsTotal = new Counter('k6_http_reqs_total');
 const k6HttpReqFailedTotal = new Counter('k6_http_req_failed_total');
@@ -39,18 +43,27 @@ export const options = {
   scenarios: {
     archer_session_replay: {
       executor: 'constant-vus',
-      vus: 10,
+      vus: 1,
       duration: '1m',
       exec: 'sessionReplay',
     },
   },
   thresholds: {
-    'http_req_duration': ['p(95)<800'],
+    'http_req_duration': ['p(95)<1000'],
     'http_req_failed': ['rate<0.8'],
+    'checks': ['rate>0.9'],
   },
 };
 
-const SCENARIO_MAX_VUS = Math.max(...Object.values(options.scenarios).flatMap(s => (s.stages || []).map(st => st.target ?? 0)), 1);
+const SCENARIO_MAX_VUS = Math.max(
+  ...Object.values(options.scenarios).flatMap(s => [
+    s.vus ?? 0,
+    s.maxVUs ?? 0,
+    s.preAllocatedVUs ?? 0,
+    ...((s.stages || []).map(st => st.target ?? 0)),
+  ]),
+  1
+);
 
 function getByteLength(value) {
   if (value === null || value === undefined) return 0;
@@ -141,7 +154,7 @@ function isResponseStatusExpected(response, expectedStatus) {
   if (expectedStatus >= 300 && expectedStatus < 400) {
     return response.status >= 300 && response.status < 400;
   }
-  return response.status === 401 || response.status === 403;
+  return false;
 }
 function recordCustomMetrics(response, scenario, apiTag, urlPath, sentBytes, requestName, expectedStatus) {
   const failed = response.status >= 400 && !isResponseStatusExpected(response, expectedStatus) ? 1 : 0;
@@ -167,6 +180,87 @@ function recordCustomMetrics(response, scenario, apiTag, urlPath, sentBytes, req
   ]);
 }
 
+function getVuCredential() {
+  if (!CREDENTIALS.length) {
+    fail('No login credentials available — upload a credentials CSV on the Executor page.');
+  }
+  return CREDENTIALS[(__VU - 1) % CREDENTIALS.length];
+}
+
+let __vuJar = null;
+function getVuJar() {
+  if (!__vuJar) __vuJar = http.cookieJar();
+  return __vuJar;
+}
+
+function extractSessionToken(body) {
+  return (body && body.RequestedObject && body.RequestedObject.SessionToken) || '';
+}
+function extractJwt(body) {
+  if (!body) return '';
+  return (
+    (body.RequestedObject && (body.RequestedObject.Jwt || body.RequestedObject.AccessToken)) ||
+    body.Jwt || body.jwt || body.AccessToken || body.access_token || body.token || ''
+  );
+}
+function authHeadersFromAuth(auth) {
+  const headers = {};
+  if (auth && auth.cookieHeader) headers.Cookie = auth.cookieHeader;
+  if (auth && auth.jwt) headers.Authorization = 'Bearer ' + auth.jwt;
+  return headers;
+}
+
+let __vuAuth = null;
+function ensureAuth() {
+  if (__vuAuth) return __vuAuth;
+  const cred = getVuCredential();
+  const loginPayload = { Username: cred.username, Password: cred.password, InstanceName: cred.instanceName };
+  const res = http.post(
+    cred.loginUrl,
+    JSON.stringify(loginPayload),
+    { headers: { 'Content-Type': 'application/json' }, tags: { name: 'Login' }, jar: getVuJar() },
+  );
+  let body = {};
+  try { body = res.json(); } catch (e) { body = {}; }
+  const sessionToken = extractSessionToken(body);
+  const jwt = extractJwt(body);
+  if (!sessionToken && !jwt) {
+    fail('Login failed for VU ' + __VU + ': ' + JSON.stringify(body).substring(0, 300));
+  }
+  __vuAuth = {
+    sessionToken: sessionToken,
+    jwt: jwt,
+    cookieHeader: sessionToken ? '__ArcherSessionCookie__=' + sessionToken : '',
+  };
+  console.log('VU ' + __VU + ': Successfully authenticated as ' + cred.username + (jwt ? ' (session cookie + bearer JWT)' : ' (session cookie only)'));
+  return __vuAuth;
+}
+
+function reauth() {
+  __vuAuth = null;
+  console.warn('VU ' + __VU + ': got 401 — re-authenticating.');
+  const jar = getVuJar();
+  const stale = jar.cookiesForURL(BASE_URL) || {};
+  Object.keys(stale).forEach(function (name) {
+    jar.set(BASE_URL, name, '', { expires: new Date(0).toUTCString() });
+  });
+  return ensureAuth();
+}
+
+// NOTE re: HAR-import warning — e.g.
+//   "9185004.classic-dev.internal.archerirm.net_Login_CreateRecord_DeleteRecord.har:
+//    form-encoded body for POST https://.../default.aspx parsed into 11 field(s)"
+// This is an INFORMATIONAL warning, not an error. It simply means the recorded
+// HAR contained a POST whose request body used the
+// application/x-www-form-urlencoded content type (an HTML form post, e.g. the
+// ASP.NET WebForms postback to default.aspx with fields like __VIEWSTATE,
+// __EVENTVALIDATION, __EVENTTARGET, etc.). The importer decoded that raw body
+// string into 11 discrete key/value form fields so the request could be
+// replayed faithfully. The count "11 field(s)" is just how many form fields
+// were detected. No action is required — replayStep() below re-sends these as a
+// form body (payloadType === 'form') via requestBody(). Only investigate if the
+// field count looks wrong (e.g. missing __VIEWSTATE) or the replayed postback
+// returns an unexpected status.
 function requestBody(payload, payloadType) {
   if (!payload) return null;
   if (payloadType === 'form') {
@@ -182,68 +276,6 @@ function requestBody(payload, payloadType) {
   return payload;
 }
 
-function buildLoginClientState(value) {
-  return JSON.stringify({
-    enabled: true,
-    emptyMessage: '',
-    validationText: value || '',
-    valueAsString: value || '',
-    lastSetTextBoxValue: value || '',
-  });
-}
-
-// Fresh __VIEWSTATE / __VIEWSTATEGENERATOR / __EVENTVALIDATION / loginCsrfToken are
-// scraped from a live GET of the login page (see setup() below) rather than reused
-// from the HAR capture — ASP.NET WebForms rejects a postback whose __VIEWSTATE
-// doesn't match the one it most recently issued, so replaying the stale captured
-// value fails on every run after the one it was recorded in.
-function extractLoginPageTokens(html) {
-  const tokens = {};
-  if (!html) return tokens;
-  const body = String(html);
-  const viewState = body.match(/id="__VIEWSTATE"[^>]*value="([^"]*)"/);
-  if (viewState) tokens.__VIEWSTATE = viewState[1];
-  const viewStateGen = body.match(/id="__VIEWSTATEGENERATOR"[^>]*value="([^"]*)"/);
-  if (viewStateGen) tokens.__VIEWSTATEGENERATOR = viewStateGen[1];
-  const eventValidation = body.match(/id="__EVENTVALIDATION"[^>]*value="([^"]*)"/);
-  if (eventValidation) tokens.__EVENTVALIDATION = eventValidation[1];
-  const csrf = body.match(/loginCsrfToken['"]?\s*[:=]\s*['"]([0-9a-fA-F-]{16,})['"]/);
-  if (csrf) tokens.loginCsrfToken = csrf[1];
-  return tokens;
-}
-
-function buildLoginRequestPayload(reqDef, freshTokens) {
-  if (!reqDef || reqDef.payloadType !== 'form') {
-    return requestBody(reqDef && reqDef.payload, reqDef && reqDef.payloadType);
-  }
-
-  let payload = requestBody(reqDef.payload, reqDef.payloadType);
-  if (typeof payload === 'string') {
-    try {
-      payload = JSON.parse(payload);
-    } catch (e) {
-      return payload;
-    }
-  }
-  if (!payload || typeof payload !== 'object') {
-    return payload;
-  }
-
-  const tokens = freshTokens || {};
-  // Fresh page-scraped values always win over the stale HAR-captured ones —
-  // ASP.NET postback validation fails otherwise. LOGIN_CSRF_TOKEN env var, if
-  // explicitly set, takes priority over both (manual override escape hatch).
-  if (tokens.__VIEWSTATE) payload.__VIEWSTATE = tokens.__VIEWSTATE;
-  if (tokens.__VIEWSTATEGENERATOR) payload.__VIEWSTATEGENERATOR = tokens.__VIEWSTATEGENERATOR;
-  if (tokens.__EVENTVALIDATION) payload.__EVENTVALIDATION = tokens.__EVENTVALIDATION;
-  payload.loginCsrfToken = LOGIN_CREDENTIALS.loginCsrfToken || tokens.loginCsrfToken || payload.loginCsrfToken;
-  payload.txtUserName = LOGIN_CREDENTIALS.username;
-  payload.txtUserName_ClientState = buildLoginClientState(LOGIN_CREDENTIALS.username);
-  payload.txtpassword = LOGIN_CREDENTIALS.password;
-  payload.txtpassword_ClientState = buildLoginClientState(LOGIN_CREDENTIALS.password);
-  return payload;
-}
-
 function sanitizeHeaders(headers) {
   const sanitized = {};
   if (!headers) return sanitized;
@@ -251,7 +283,8 @@ function sanitizeHeaders(headers) {
     const value = headers[name];
     if (value === undefined || value === null || String(value).trim() === '') return;
     const normalizedName = String(name).toLowerCase();
-    if (normalizedName === 'content-length' || normalizedName === 'transfer-encoding') return;
+    if (normalizedName === 'content-length' || normalizedName === 'transfer-encoding'
+      || normalizedName === 'user-agent' || normalizedName === 'origin' || normalizedName === 'referer') return;
     sanitized[name] = value;
   });
   return sanitized;
@@ -264,6 +297,61 @@ function getResponseBody(response) {
   } catch (e) {
     return {};
   }
+}
+
+function getByJsonPath(obj, jsonPath) {
+  if (!obj || !jsonPath) return undefined;
+  return jsonPath.split('.').reduce(function (acc, key) {
+    return (acc === undefined || acc === null) ? undefined : acc[key];
+  }, obj);
+}
+
+function substituteCorrelationVars(text, correlationVars) {
+  if (!text) return text;
+  return text.replace(/__CORR_([A-Za-z0-9]+)_(\d+)__/g, function (match, token, fallbackLiteral) {
+    const resolved = correlationVars ? correlationVars[token] : undefined;
+    return (resolved !== undefined && resolved !== null && resolved !== '') ? String(resolved) : fallbackLiteral;
+  });
+}
+
+function captureCorrelationVars(reqDef, response, correlationVars) {
+  if (!reqDef.producesVars || reqDef.producesVars.length === 0) return;
+  const body = getResponseBody(response);
+  reqDef.producesVars.forEach(function (v) {
+    const value = getByJsonPath(body, v.jsonPath);
+    if (value !== undefined && value !== null) {
+      correlationVars[v.token] = value;
+      console.log('VU ' + __VU + ': captured runtime id ' + value + ' from ' + reqDef.name + ' (' + v.jsonPath + ') -> ' + v.token);
+    }
+  });
+}
+
+let __csrfToken = '';
+function captureCsrfToken(reqDef, response) {
+  if (!/GetModuleRecordAccess/i.test(String(reqDef.path || ''))) return;
+  const token = response.headers['csrf-token'] || response.headers['Csrf-Token'] || response.headers['CSRF-Token'];
+  if (token) {
+    __csrfToken = token;
+    console.log('VU ' + __VU + ': captured fresh csrf-token from ' + reqDef.name);
+  }
+}
+
+function isKnownBenignNotFound(reqDef, response) {
+  if (response.status !== 404) return false;
+  const p = String(reqDef.path || '').toLowerCase();
+  return p.indexOf('advanced-workflow-configuration') !== -1
+    || p.indexOf('release_lock') !== -1
+    || p.indexOf('release-lock') !== -1;
+}
+
+function isIdempotentDeleteOutcome(reqDef, response) {
+  if (String(reqDef.method || '').toUpperCase() !== 'DELETE') return false;
+  return response.status === 404 || response.status === 409;
+}
+
+const RESPONSE_THRESHOLD_FLOOR_MS = 1000;
+function effectiveResponseThreshold(reqDef) {
+  return Math.max(reqDef.responseThresholdMs, RESPONSE_THRESHOLD_FLOOR_MS);
 }
 
 function buildCookieHeader(response, fallbackToken, loginRequest) {
@@ -280,121 +368,15 @@ function buildCookieHeader(response, fallbackToken, loginRequest) {
   return cookieParts.join('; ');
 }
 
-// A captured login postback doesn't always have "login"/"auth"/"signin" in its
-// name or URL (e.g. this app posts back to the same /default.aspx the page was
-// served from) — fall back to sniffing the payload for giveaway WebForms login
-// field names so the login step is still detected and parameterized correctly.
-function looksLikeLoginPayload(reqDef) {
-  if (!reqDef || !reqDef.payload) return false;
-  const raw = String(reqDef.payload);
-  return /loginCsrfToken/i.test(raw) || /txtpassword/i.test(raw) || /btnLogin/i.test(raw);
-}
-
 function findLoginRequest(requests) {
   if (!requests || requests.length === 0) return null;
   if (LOGIN_REQUEST) return LOGIN_REQUEST;
-  const byNamePath = requests.filter(function (reqDef) {
+  const loginCandidates = requests.filter(function (reqDef) {
     const name = String(reqDef.name || '').toLowerCase();
     const path = String(reqDef.path || '').toLowerCase();
     return name.includes('login') || name.includes('auth') || name.includes('signin') || path.includes('login') || path.includes('auth') || path.includes('signin');
   });
-  if (byNamePath.length > 0) return byNamePath[0];
-  const byPayload = requests.filter(function (reqDef) { return reqDef.method === 'POST' && looksLikeLoginPayload(reqDef); });
-  return byPayload[0] || null;
-}
-
-// ── Created-resource id correlation ─────────────────────────────────────────
-//
-// A captured session that creates a record (POST to a bare collection endpoint,
-// e.g. /ngrx/record/v1/contents) and then reads/updates/deletes it embeds the
-// ORIGINAL run's record id as a literal path segment in every dependent call
-// (…/contents/786450/summary, …/contents/786450/acquire-lock, etc). Replaying
-// that literal id verbatim only works for the single record that happened to
-// exist at capture time — every fresh run (and every concurrent VU) creates its
-// OWN new record with a different id, so the dependent calls must be rewritten
-// to use the id that THIS run's create call actually returned.
-//
-// Rules are derived once, statically, from the shape of CAPTURED_REQUESTS
-// itself: a POST whose own path does NOT end in a numeric segment is a
-// candidate "creator". Its last path segment (e.g. "contents") is used as an
-// anchor — any other captured path containing "/<anchor>/<digits>" with a
-// consistent numeric value is a dependent that needs that id substituted at
-// runtime. Only 4+ digit ids are considered, to avoid false positives on small
-// literal indices (e.g. the "0" in /ngrx/search/results/0/facets).
-function buildCorrelationRules(requests) {
-  const rules = [];
-  requests.forEach(function (creator) {
-    if (creator.method !== 'POST') return;
-    const creatorCleanPath = creator.path.split('?')[0].replace(/\/$/, '');
-    const creatorSegments = creatorCleanPath.split('/').filter(Boolean);
-    const lastSeg = creatorSegments[creatorSegments.length - 1];
-    if (!lastSeg || /^\d+$/.test(lastSeg)) return; // creator's own path already has an id — not a plain collection POST
-    const anchor = '/' + lastSeg + '/';
-    let oldId = null;
-    const dependents = [];
-    requests.forEach(function (dep) {
-      if (dep === creator) return;
-      const depPath = dep.path.split('?')[0];
-      const idx = depPath.indexOf(anchor);
-      if (idx === -1) return;
-      const rest = depPath.slice(idx + anchor.length);
-      const match = rest.match(/^(\d{4,})/);
-      if (!match) return;
-      if (oldId === null) oldId = match[1];
-      if (match[1] !== oldId) return; // inconsistent id under the same anchor — skip, not a clean correlation
-      dependents.push(dep);
-    });
-    if (oldId && dependents.length > 0) {
-      rules.push({
-        creatorName: creator.name,
-        creatorMethod: creator.method,
-        creatorPath: creator.path,
-        anchor: anchor,
-        oldId: oldId,
-      });
-    }
-  });
-  return rules;
-}
-
-const CORRELATION_RULES = buildCorrelationRules(CAPTURED_REQUESTS);
-
-// Looks for a newly-created resource id in a handful of common REST response
-// shapes. Returns null (never throws) when the response doesn't match any of
-// them, so a rule that doesn't pan out just leaves the stale id in place
-// instead of breaking the run.
-function extractCreatedId(body) {
-  if (!body || typeof body !== 'object') return null;
-  const candidates = [
-    body.RequestedObject && (body.RequestedObject.Id ?? body.RequestedObject.id),
-    body.Id, body.id, body.ID,
-    body.data && (body.data.Id ?? body.data.id),
-  ];
-  const found = candidates.find(function (v) { return v !== undefined && v !== null; });
-  return found !== undefined ? String(found) : null;
-}
-
-// Rewrites reqDef.path / reqDef.payload to swap any correlated oldId for the id
-// this run's create call actually returned. Returns reqDef unchanged (same
-// reference) when no correlation applies, so callers can't accidentally mutate
-// the shared CAPTURED_REQUESTS array — a new object is only ever produced when
-// a substitution actually happens.
-function applyCorrelatedIds(reqDef, correlatedIds) {
-  const oldIds = Object.keys(correlatedIds);
-  if (oldIds.length === 0) return reqDef;
-  let path = reqDef.path;
-  let payload = reqDef.payload;
-  let changed = false;
-  oldIds.forEach(function (oldId) {
-    const newId = correlatedIds[oldId];
-    const pathRe = new RegExp('(^|/)' + oldId + '(?=/|\\?|$)', 'g');
-    if (pathRe.test(path)) { path = path.replace(pathRe, '$1' + newId); changed = true; }
-    if (typeof payload === 'string' && payload.indexOf(oldId) !== -1) {
-      payload = payload.replace(new RegExp('\\b' + oldId + '\\b', 'g'), newId);
-      changed = true;
-    }
-  });
-  return changed ? Object.assign({}, reqDef, { path: path, payload: payload }) : reqDef;
+  return loginCandidates[0] || null;
 }
 
 export function setup() {
@@ -405,55 +387,7 @@ export function setup() {
     'testStartEnd,' + buildInfluxTagSet({ runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, type: 'started' }) + ' value=1i ' + ts,
     'k6_vus_max,testid=' + escapeTagValue(TEST_ID) + ' value=' + SCENARIO_MAX_VUS + 'i ' + ts,
   ]);
-
-  const jar = http.cookieJar();
-  const effectiveLoginRequest = findLoginRequest(CAPTURED_REQUESTS);
-  if (!effectiveLoginRequest) {
-    console.log('Setup: no login/auth request found; continuing without authentication.');
-    return { jar: jar };
-  }
-
-  // Fetch a fresh copy of the login page first so __VIEWSTATE / __VIEWSTATEGENERATOR
-  // / loginCsrfToken reflect what the server issued for THIS run, not the stale
-  // values captured in the HAR (which are single-use / expired by replay time).
-  let freshTokens = {};
-  try {
-    const loginPageRes = http.get(BASE_URL + effectiveLoginRequest.path, {
-      jar: jar,
-      tags: { name: 'GET ' + effectiveLoginRequest.path + ' (login page)' },
-    });
-    freshTokens = extractLoginPageTokens(loginPageRes.body);
-  } catch (e) {
-    console.warn('Setup: failed to fetch fresh login page tokens: ' + e);
-  }
-
-  const res = http.request(
-    effectiveLoginRequest.method,
-    BASE_URL + effectiveLoginRequest.path,
-    buildLoginRequestPayload(effectiveLoginRequest, freshTokens),
-    {
-      headers: sanitizeHeaders(effectiveLoginRequest.headers),
-      redirects: 5,
-      tags: { name: effectiveLoginRequest.name || effectiveLoginRequest.path },
-      jar: jar,
-    }
-  );
-
-  const body = getResponseBody(res);
-  const sessionToken = (
-    (body.RequestedObject && body.RequestedObject.SessionToken) ||
-    body.access_token || body.token || body.sessionToken ||
-    (body.data && body.data.token) || (body.data && body.data.access_token) || ''
-  );
-  const cookieHeader = buildCookieHeader(res, sessionToken, effectiveLoginRequest);
-
-  if (!cookieHeader && !sessionToken && !(res.status >= 300 && res.status < 400)) {
-    console.warn('Setup: authentication request returned no session data; continuing without auth headers.');
-    return { jar: jar };
-  }
-
-  console.log('Setup: authentication completed with status ' + res.status + '.');
-  return { jar: jar, cookieHeader: cookieHeader };
+  return null;
 }
 
 export function teardown() {
@@ -464,35 +398,60 @@ export function teardown() {
   flushInfluxLines();
 }
 
-function replayStep(reqDef, jar, authHeaders) {
-  const url = BASE_URL + reqDef.path;
-  const params = {
-    headers: Object.assign({}, sanitizeHeaders(reqDef.headers), authHeaders),
-    redirects: 5,
-    tags: { name: reqDef.name },
-    jar: jar,
-  };
-  const res = http.request(reqDef.method, url, requestBody(reqDef.payload, reqDef.payloadType), params);
+function replayStep(reqDef, jar, correlationVars) {
+  const path = substituteCorrelationVars(reqDef.path, correlationVars);
+  const payload = substituteCorrelationVars(reqDef.payload, correlationVars);
+  const url = BASE_URL + path;
 
+  function doRequest(authHeaders) {
+    const headers = Object.assign(
+      {},
+      sanitizeHeaders(reqDef.headers),
+      authHeaders,
+    );
+    if (__csrfToken) headers['x-csrf-token'] = __csrfToken;
+    const params = {
+      headers: headers,
+      redirects: 5,
+      tags: { name: reqDef.name },
+      jar: jar,
+    };
+    return http.request(reqDef.method, url, requestBody(payload, reqDef.payloadType), params);
+  }
+
+  let auth = ensureAuth();
+  let res = doRequest(authHeadersFromAuth(auth));
+
+  if (res.status === 401 || res.status === 403) {
+    auth = reauth();
+    res = doRequest(authHeadersFromAuth(auth));
+  }
+
+  captureCsrfToken(reqDef, res);
+
+  const effectiveExpectedStatus = isKnownBenignNotFound(reqDef, res) ? 404
+    : isIdempotentDeleteOutcome(reqDef, res) ? res.status
+    : reqDef.expectedStatus;
+
+  const responseThresholdMs = effectiveResponseThreshold(reqDef);
   check(res, {
-    [reqDef.name + ' status is ' + reqDef.expectedStatus]: function (r) { return isResponseStatusExpected(r, reqDef.expectedStatus); },
-    [reqDef.name + ' response time < ' + reqDef.responseThresholdMs + 'ms']: function (r) { return r.timings.duration < reqDef.responseThresholdMs; },
+    [reqDef.name + ' status is ' + reqDef.expectedStatus]: function (r) { return isResponseStatusExpected(r, effectiveExpectedStatus); },
+    [reqDef.name + ' response time < ' + responseThresholdMs + 'ms']: function (r) { return r.timings.duration < responseThresholdMs; },
   });
 
-  recordCustomMetrics(res, SCENARIO_NAME, reqDef.name, reqDef.path, getByteLength(reqDef.payload || ''), reqDef.name, reqDef.expectedStatus);
+  recordCustomMetrics(res, SCENARIO_NAME, reqDef.name, path, getByteLength(payload || ''), reqDef.name, effectiveExpectedStatus);
 
-  if (res.status >= 400 && !isResponseStatusExpected(res, reqDef.expectedStatus)) {
+  if (res.status >= 400 && !isResponseStatusExpected(res, effectiveExpectedStatus)) {
     const responseBody = String(res.body || '').substring(0, 800);
     const responseHeaders = JSON.stringify(res.headers || {});
     console.error(reqDef.name + ' failed: ' + res.status + ' body=' + responseBody + ' headers=' + responseHeaders);
   }
 
-  return res;
+  captureCorrelationVars(reqDef, res, correlationVars);
 }
 
 export function sessionReplay(setupData) {
-  const jar = (setupData && setupData.jar) ? setupData.jar : http.cookieJar();
-  const authHeaders = (setupData && setupData.cookieHeader) ? { Cookie: setupData.cookieHeader } : {};
+  const jar = getVuJar();
   const _ts = String(Date.now()) + '000000';
   k6IterationsTotal.add(1, { testid: TEST_ID, scenario: SCENARIO_NAME });
   k6Vus.add(1, { testid: TEST_ID, scenario: SCENARIO_NAME, vu: String(__VU) });
@@ -502,32 +461,14 @@ export function sessionReplay(setupData) {
     'virtualUsers,' + buildInfluxTagSet({ runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, scenario: SCENARIO_NAME }) + ' meanActiveThreads=1,finishedThreads=' + __ITER + ' ' + _ts,
   ]);
 
-  const effectiveLoginRequest = findLoginRequest(CAPTURED_REQUESTS);
-  const replayRequests = effectiveLoginRequest
-    ? CAPTURED_REQUESTS.filter(function (reqDef) {
-        return !(reqDef.name === effectiveLoginRequest.name && reqDef.method === effectiveLoginRequest.method && reqDef.path === effectiveLoginRequest.path);
-      })
-    : CAPTURED_REQUESTS;
+  const replayRequests = CAPTURED_REQUESTS;
 
-  // Per-iteration correlation state — each VU/iteration creates its own record,
-  // so the id map must never be shared across iterations or VUs.
-  const correlatedIds = {};
+  const correlationVars = {};
 
   for (let i = 0; i < replayRequests.length; i++) {
-    const reqDef = applyCorrelatedIds(replayRequests[i], correlatedIds);
+    const reqDef = replayRequests[i];
     group(reqDef.name, function () {
-      const res = replayStep(reqDef, jar, authHeaders);
-      const rule = CORRELATION_RULES.find(function (r) {
-        return r.creatorName === reqDef.name && r.creatorMethod === reqDef.method && r.creatorPath === reqDef.path;
-      });
-      if (rule) {
-        const newId = extractCreatedId(getResponseBody(res));
-        if (newId) {
-          correlatedIds[rule.oldId] = newId;
-        } else {
-          console.warn(reqDef.name + ': expected a created-resource id in the response for correlation but none was found; steps referencing id ' + rule.oldId + ' will fall back to the stale captured value.');
-        }
-      }
+      replayStep(reqDef, jar, correlationVars);
     });
     sleep(1);
   }
