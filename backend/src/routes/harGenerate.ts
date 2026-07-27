@@ -87,15 +87,27 @@ function stripAuthHeaders(headers: Record<string, string>): Record<string, strin
 const MODULE_RECORD_ACCESS_RE = /GetModuleRecordAccess/i;
 
 // STRICT HEADER ALLOWLIST for every non-login replay call — per explicit
-// product requirement, the generated script must carry ONLY these 3 headers
+// product requirement, the generated script must carry ONLY these headers
 // on non-login requests, taken from the HAR exactly as specified:
 //   - Cookie: ONLY the __ArcherSessionCookie__=<token> value (never any other
 //     cookie captured on the request)
 //   - x-csrf-token: verbatim from the HAR's own Header section
 //   - Content-Type: application/json (fixed, not the HAR's captured mimeType)
+//   - x-archer-source: verbatim from the HAR's own Header section, when
+//     present — Archer's classic /api/* gateway uses this ALONGSIDE the csrf
+//     token to authorize the call, and its value is call-specific (e.g.
+//     "Archer,ConsumerResources" vs "Archer,Translations" vs "Archer,
+//     Navigation"), not a fixed constant. Dropping it produces a 403 even
+//     though the session cookie and csrf token are both valid — this is NOT
+//     an auth failure, so it's easy to misdiagnose as a stale token/cookie.
+//   - x-requested-with: verbatim from the HAR's own Header section, when
+//     present — only some classic endpoints send it (e.g. ConsumerResources),
+//     others legitimately omit it (e.g. ConsumerGroups), so it must be
+//     copied per-call rather than assumed universal.
 // Every other header key present in the HAR is ignored outright.
 function buildReplayHeaders(tc: ParsedTestCase): Record<string, string> {
   const cookie = tc.archerSessionToken ? `__ArcherSessionCookie__=${tc.archerSessionToken}` : undefined;
+  const findHeader = (name: string) => Object.entries(tc.headers).find(([k]) => k.toLowerCase() === name)?.[1];
 
   if (MODULE_RECORD_ACCESS_RE.test(tc.url)) {
     const headers: Record<string, string> = { 'x-http-method-override': 'GET', 'Content-Type': 'application/json' };
@@ -105,8 +117,12 @@ function buildReplayHeaders(tc: ParsedTestCase): Record<string, string> {
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (cookie) headers.Cookie = cookie;
-  const csrfEntry = Object.entries(tc.headers).find(([k]) => k.toLowerCase() === 'x-csrf-token');
-  if (csrfEntry) headers['x-csrf-token'] = csrfEntry[1];
+  const csrfToken = findHeader('x-csrf-token');
+  if (csrfToken) headers['x-csrf-token'] = csrfToken;
+  const archerSource = findHeader('x-archer-source');
+  if (archerSource) headers['x-archer-source'] = archerSource;
+  const requestedWith = findHeader('x-requested-with');
+  if (requestedWith) headers['x-requested-with'] = requestedWith;
   return headers;
 }
 
