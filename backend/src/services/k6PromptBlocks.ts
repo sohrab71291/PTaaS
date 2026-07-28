@@ -271,27 +271,69 @@ export function setup() {
   return { sessionToken: sessionToken, cookieHeader: cookieHeader };
 }
 
-Every exec function MUST accept the setup() return value as its parameter and fail fast if the token is missing, instead of attempting its own login. Every authenticated request MUST send the shared session via the Cookie header built in setup() — this is the "required cookie header value" every other API call needs:
+REAUTH ON 401/403 IS MANDATORY — the shared session from setup() can expire
+mid-run; a bare 401/403 on a request does NOT mean the whole flow is broken,
+just that the session needs refreshing. Reproduce this helper once, near
+setup() (it repeats setup()'s own login call verbatim — same url/payload/
+extraction logic — so keep them in sync if you change one):
+
+function reauthenticate() {
+  const url = BASE_URL + '<login endpoint from test cases>';
+  const payload = JSON.stringify({ /* same login fields as setup() above */ });
+  const res = http.post(url, payload, { headers: { 'Content-Type': 'application/json' } });
+  let body = {};
+  try { body = res.json(); } catch (e) { body = {}; }
+  const sessionToken = (
+    (body.RequestedObject && body.RequestedObject.SessionToken) ||
+    body.access_token || body.token || body.sessionToken ||
+    (body.data && body.data.token) || (body.data && body.data.access_token) || ''
+  );
+  const cookieParts = [];
+  if (res.cookies) {
+    for (const cookieName of Object.keys(res.cookies)) {
+      const c = res.cookies[cookieName][0];
+      if (c) cookieParts.push(cookieName + '=' + c.value);
+    }
+  }
+  if (cookieParts.length === 0 && sessionToken) cookieParts.push('<cookie-name>=' + sessionToken);
+  console.warn('Re-authenticating after a 401/403 — session token acquired.');
+  return { sessionToken: sessionToken, cookieHeader: cookieParts.join('; ') };
+}
+
+Every exec function MUST accept the setup() return value as its parameter and fail fast if the token is missing, instead of attempting its own login. Every authenticated request MUST send the shared session via the Cookie header built in setup() — this is the "required cookie header value" every other API call needs. Do NOT cache a module-level mutable copy of setupData that every VU reads/writes — reassign a LOCAL variable per exec-function invocation instead, seeded from setupData, so a 401 retry in one VU's iteration never leaks into another VU's request:
 
 export function <execFnName>(setupData) {
-  const sessionToken = (setupData && setupData.sessionToken) ? setupData.sessionToken : '';
-  const cookieHeader = (setupData && setupData.cookieHeader) ? setupData.cookieHeader : '';
-  if (!sessionToken) {
+  let auth = { sessionToken: (setupData && setupData.sessionToken) || '', cookieHeader: (setupData && setupData.cookieHeader) || '' };
+  if (!auth.sessionToken) {
     fail('Session token is missing from setup. Cannot execute authenticated API calls.');
   }
-  const authHeaders = { Cookie: cookieHeader };
-  // ... use authHeaders on every authenticated request below
+  // ... build authHeaders from auth (see below) and issue the request. On a
+  // 401 or 403 response, call auth = reauthenticate(); ONCE and retry the
+  // SAME request exactly once with the refreshed headers before falling
+  // through to normal check()/metrics/error-logging — never retry twice; a
+  // second consecutive 401/403 is a real failure (isResponseStatusExpected
+  // in the InfluxDB block above NEVER treats 401/403 as expected, by design).
 }
 
 Every authenticated request MUST wrap headers in a params object, spreading
-authHeaders alongside any per-request headers (e.g. Content-Type) — do not pass
-authHeaders directly as the headers value:
+authHeaders (built fresh from the current auth value — NOT a stale object
+captured once at the top of the exec function, since a mid-function reauth()
+call replaces it) alongside any per-request headers (e.g. Content-Type) — do
+not pass authHeaders directly as the headers value:
+
+function authHeadersFrom(auth) {
+  return { Cookie: auth.cookieHeader };
+}
 
 const params = {
-  headers: { ...authHeaders, 'Content-Type': 'application/json' },
+  headers: { ...authHeadersFrom(auth), 'Content-Type': 'application/json' },
   tags: { name: '<RequestName>' },
 };
-const res = http.post(url, payload, params);
+let res = http.post(url, payload, params);
+if (res.status === 401 || res.status === 403) {
+  auth = reauthenticate();
+  res = http.post(url, payload, { headers: { ...authHeadersFrom(auth), 'Content-Type': 'application/json' }, tags: { name: '<RequestName>' } });
+}
 
 At the START of every exec function iteration (NOT export default), add:
 
@@ -552,6 +594,28 @@ const laterParams = {
   headers: { ...authHeaders, 'x-csrf-token': csrfToken, 'x-archer-source': '<verbatim from this call\\'s captured headers, if present>', 'Content-Type': 'application/json' },
   tags: { name: '<RequestName>' },
 };
+
+CSRF REFRESH ON REAUTH IS MANDATORY. A csrf token is bound to the specific
+session that produced it — the moment your reauth()/reauthenticate() helper
+(see AUTHENTICATION PATTERN above — CSV pattern's reauth(), or the generic
+pattern's reauthenticate()) obtains a NEW session after a 401/403, the OLD
+csrfToken becomes invalid for it even though it still looks like a
+normal-shaped token. Retrying the failed request with a (new session, old
+csrf) pair gets rejected by Archer's classic /api/* gateway with a generic
+IIS 403 "Forbidden: Access is denied" — NOT a 401 — so this is easy to
+misdiagnose as a permissions problem rather than what it actually is: a
+one-call-stale csrf token. Whichever reauth helper your AUTHENTICATION
+PATTERN uses, it MUST re-issue the GetModuleRecordAccess call (with the
+freshly reauthenticated session's headers) and re-capture csrfToken from its
+response BEFORE the caller retries the original failed request:
+
+// Inside reauth()/reauthenticate(), immediately after the new session is
+// obtained (before returning it to the caller that will retry):
+const csrfRes = http.post(BASE_URL + '<GetModuleRecordAccess captured path>', payload, {
+  headers: { Cookie: '__ArcherSessionCookie__=' + newAuth.sessionToken, 'x-http-method-override': 'GET', 'Content-Type': 'application/json' },
+  tags: { name: 'GetModuleRecordAccess (csrf-refresh)' },
+});
+csrfToken = csrfRes.headers['csrf-token'] || csrfRes.headers['Csrf-Token'] || csrfToken;
 `;
 }
 

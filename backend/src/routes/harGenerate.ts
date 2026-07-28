@@ -226,7 +226,7 @@ ${useCsvCredentials
 14. Every VU must use its own cookie jar, never one shared object handed down from setup() — reproduce getVuJar() from the REPLAY HARNESS PATTERN below verbatim and call it in sessionReplay(); do NOT read a jar off setupData.
 15. RE-AUTH ON 401/403 is MANDATORY — reproduce replayStep exactly as shown in the REPLAY HARNESS PATTERN below: on a 401 OR 403 response, call reauth() once, rebuild the request's auth headers from the result, and retry the SAME request exactly once before falling through to normal check()/metrics/error-logging on whichever response (original or retried) is now current. Never retry more than once per step — a second consecutive 401/403 is a real failure, not a transient token expiry.
 16. Per-request response-time checks must use effectiveResponseThreshold(reqDef) (see REPLAY HARNESS PATTERN), NEVER the raw reqDef.responseThresholdMs directly — a single captured HAR sample under no concurrent load is not a reliable per-request SLA under real replay load, and using it verbatim produces noisy false-positive check failures unrelated to actual regressions.
-17. CSRF PROPAGATION IS MANDATORY whenever any captured call targets .../api/internal/Permission/GetModuleRecordAccess — reproduce the module-level \`__csrfToken\` variable and \`captureCsrfToken(reqDef, response)\` from the REPLAY HARNESS PATTERN below verbatim, call it in replayStep right after the response comes back (both the initial and any 401-retry response), and override the request's x-csrf-token header with \`__csrfToken\` whenever it is non-empty — this MUST take priority over any x-csrf-token value baked into reqDef.headers from the HAR capture, which is a stale snapshot from capture time. Do not scope __csrfToken per-iteration (unlike correlationVars) — like the session cookie, it stays valid across iterations once obtained. A csrf token is bound to the specific session that produced it — reproduce \`findModuleRecordAccessRequest()\`/\`refreshCsrfToken(jar, authHeaders)\` verbatim too, and call \`refreshCsrfToken(jar, authHeadersFromAuth(__vuAuth))\` at the END of reauth(), right after \`__vuAuth\` is reassigned to the fresh session — otherwise the retried request after a reauth() sends a (new session, old csrf) pair, which Archer's classic /api/* gateway rejects with a generic IIS 403 that looks like a permissions error but is actually this exact mismatch.
+17. CSRF PROPAGATION IS MANDATORY for every captured session, regardless of whether it happens to include a call to .../api/internal/Permission/GetModuleRecordAccess — reproduce the module-level \`__csrfToken\` variable and \`captureCsrfToken(reqDef, response)\` from the REPLAY HARNESS PATTERN below verbatim, call it in replayStep right after EVERY response comes back (both the initial and any 401-retry response, from ANY captured call, not just GetModuleRecordAccess — Archer's classic /api/* gateway rotates the csrf token on responses generally, and GetModuleRecordAccess is only a common source of it, not the sole one; a captured session that happens not to include it must still be able to obtain a valid token from whichever calls it DOES have), and override the request's x-csrf-token header with \`__csrfToken\` whenever it is non-empty — this MUST take priority over any x-csrf-token value baked into reqDef.headers from the HAR capture, which is a stale snapshot from capture time bound to a completely different (dead) session; a script that never overrides it for lack of a GetModuleRecordAccess call in the capture will send that stale literal on every classic /api/* call and 403 permanently. Do not scope __csrfToken per-iteration (unlike correlationVars) — like the session cookie, it stays valid across iterations once obtained. A csrf token is bound to the specific session that produced it — reproduce \`findCsrfPrimingRequest()\`/\`refreshCsrfToken(jar, authHeaders)\` verbatim too, and call \`refreshCsrfToken(jar, authHeadersFromAuth(__vuAuth))\` at the END of reauth(), right after \`__vuAuth\` is reassigned to the fresh session — otherwise the retried request after a reauth() sends a (new session, old csrf) pair, which Archer's classic /api/* gateway rejects with a generic IIS 403 that looks like a permissions error but is actually this exact mismatch.
 18. EXECUTION ORDER MUST MATCH THE HAR CAPTURE ORDER — CAPTURED_REQUESTS is already injected in the exact order the calls were captured (see its shape description above). Reproduce sessionReplay's loop EXACTLY as shown in the REPLAY HARNESS PATTERN below: a plain sequential \`for (let i = 0; i < replayRequests.length; i++)\` over the array as given, calling replayStep(replayRequests[i], ...) and letting that request's response come back (k6's http.request() is already synchronous/blocking, so this happens naturally) before moving on to i+1. Do NOT sort, group by method/endpoint, batch, deduplicate further, reverse, or otherwise reorder CAPTURED_REQUESTS or replayRequests in any way — a captured Login→CreateRecord→DeleteRecord flow depends on that exact sequence (e.g. DeleteRecord referencing an id CreateRecord just produced via ID CORRELATION per rule 13); replaying out of order breaks the flow even if every individual request is otherwise correct.
 
 ${buildInfluxBlock(baseUrl)}
@@ -337,28 +337,40 @@ function captureCorrelationVars(reqDef, response, correlationVars) {
   });
 }
 
-// GetModuleRecordAccess is the call that PRODUCES the csrf token used by every
-// later authenticated request — its response carries the fresh token in a
-// 'csrf-token' response header. Module-scoped (not correlationVars-scoped)
-// because it behaves like the session cookie: once obtained it stays valid
-// for the rest of this VU's session, not just the current iteration. NEVER
-// falls back to a captured/HAR literal — a stale csrf token gets rejected by
-// the server just like an expired session would.
+// Archer's classic /api/* gateway rotates the csrf token on responses —
+// GetModuleRecordAccess is a common source of it (it's usually the first
+// classic-API call a session makes), but it is NOT the only one and is NOT
+// guaranteed to be present in every captured session (e.g. a session that
+// starts mid-flow, or where the app cached that lookup client-side). Treating
+// it as the sole source means a capture that happens to omit it has NO way to
+// ever obtain a valid token — every classic /api/* call then falls back to
+// the stale literal baked into reqDef.headers from HAR capture time, which is
+// bound to a completely different (dead) session and gets rejected outright.
+// Capture the header from ANY authenticated response that has one instead —
+// module-scoped (not correlationVars-scoped) because it behaves like the
+// session cookie: once obtained it stays valid for the rest of this VU's
+// session, not just the current iteration. NEVER falls back to a captured/HAR
+// literal — a stale csrf token gets rejected by the server just like an
+// expired session would.
 let __csrfToken = '';
 function captureCsrfToken(reqDef, response) {
-  if (!/GetModuleRecordAccess/i.test(String(reqDef.path || ''))) return;
   const token = response.headers['csrf-token'] || response.headers['Csrf-Token'] || response.headers['CSRF-Token'];
-  if (token) {
+  if (token && token !== __csrfToken) {
     __csrfToken = token;
     console.log('VU ' + __VU + ': captured fresh csrf-token from ' + reqDef.name);
   }
 }
 
-// Finds the captured GetModuleRecordAccess entry in CAPTURED_REQUESTS, if any
-// was captured. Used by reauth() below — never throws, just returns null when
-// this session's HAR capture never hit that endpoint.
-function findModuleRecordAccessRequest() {
-  return CAPTURED_REQUESTS.find(function (r) { return /GetModuleRecordAccess/i.test(String(r.path || '')); }) || null;
+// Picks a request to replay standalone in order to obtain a fresh csrf token
+// after reauth() — prefers GetModuleRecordAccess when the capture has one
+// (a lightweight, side-effect-free lookup), otherwise falls back to the
+// first captured entry (any authenticated classic /api/* or /ngrx/* call's
+// response can carry a rotated token). Never throws — returns null only if
+// CAPTURED_REQUESTS is itself empty.
+function findCsrfPrimingRequest() {
+  return CAPTURED_REQUESTS.find(function (r) { return /GetModuleRecordAccess/i.test(String(r.path || '')); })
+    || CAPTURED_REQUESTS[0]
+    || null;
 }
 
 // A csrf token is bound to the session that produced it — the moment reauth()
@@ -368,10 +380,11 @@ function findModuleRecordAccessRequest() {
 // generic IIS 403 "Forbidden: Access is denied" page — NOT a 401, so it is
 // easy to mistake for a permissions issue rather than what it actually is:
 // a stale csrf token left over from the session that just expired. Re-running
-// the captured GetModuleRecordAccess call with the FRESH session immediately
-// after reauth() fixes this by re-priming __csrfToken to match.
+// a captured request with the FRESH session immediately after reauth() fixes
+// this by re-priming __csrfToken to match (see findCsrfPrimingRequest above
+// for which request gets used).
 function refreshCsrfToken(jar, authHeaders) {
-  const reqDef = findModuleRecordAccessRequest();
+  const reqDef = findCsrfPrimingRequest();
   if (!reqDef) return;
   const headers = Object.assign({}, sanitizeHeaders(reqDef.headers), authHeaders);
   const res = http.request(
@@ -699,9 +712,10 @@ function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correl
     res = doRequest(authHeadersFromAuth(auth));
   }
 
-  // Must run before check()/metrics below — if THIS step is the
-  // GetModuleRecordAccess call, every subsequent replayStep() call (including
-  // later ones in this same loop) needs the token it just produced.
+  // Must run before check()/metrics below — if THIS response carries a fresh
+  // csrf-token (any call can, not just GetModuleRecordAccess), every
+  // subsequent replayStep() call (including later ones in this same loop)
+  // needs the token it just produced.
   captureCsrfToken(reqDef, res);
 
   // A captured call that 404s on a known-benign endpoint (see

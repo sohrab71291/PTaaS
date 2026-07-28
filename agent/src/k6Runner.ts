@@ -760,10 +760,53 @@ export class K6Runner {
    */
   private injectSummaryCapture(script: string): string {
     const captureCode =
+      // "actual" is a best-effort read of the metric's own value matching the
+      // threshold's stat (e.g. condition "p(95)<800" -> mObj.values['p(95)'];
+      // "rate<0.01" -> mObj.values.rate) — was previously never captured at
+      // all, so every threshold row in the report showed a blank Actual column.
       `  var __ptaasThresh = [];\n` +
-      `  try { if (data && data.metrics) { Object.entries(data.metrics).forEach(function(e) { var mn = e[0], mObj = e[1]; if (mObj && mObj.thresholds) { Object.entries(mObj.thresholds).forEach(function(te) { __ptaasThresh.push({ metric: mn, condition: te[0], passed: !!te[1].ok }); }); } }); } } catch(__ptaasErr) {}\n` +
+      `  try {\n` +
+      `    if (data && data.metrics) {\n` +
+      `      Object.entries(data.metrics).forEach(function(e) {\n` +
+      `        var mn = e[0], mObj = e[1];\n` +
+      `        if (mObj && mObj.thresholds) {\n` +
+      `          Object.entries(mObj.thresholds).forEach(function(te) {\n` +
+      `            var statMatch = te[0].match(/^[a-zA-Z_][\\w()]*/);\n` +
+      `            var actual = (statMatch && mObj.values) ? mObj.values[statMatch[0]] : undefined;\n` +
+      `            __ptaasThresh.push({ metric: mn, condition: te[0], passed: !!te[1].ok, actual: actual });\n` +
+      `          });\n` +
+      `        }\n` +
+      `      });\n` +
+      `    }\n` +
+      `  } catch(__ptaasErr) {}\n` +
+      // k6's summary data has NO top-level `data.checks` — individual check
+      // pass/fail results live nested under `data.root_group.checks`, and
+      // under `data.root_group.groups[].checks` for any check() inside a
+      // group() (which every check in the REPLAY HARNESS pattern is, via
+      // group(reqDef.name, ...) — so this must walk the group tree, not read
+      // a flat property that doesn't exist. In k6 v2.x, root_group.checks and
+      // root_group.groups are ARRAYS of self-describing objects (each check
+      // object already has its own .name/.passes/.fails; each group object
+      // has its own .checks/.groups) — NOT keyed objects. Handle both shapes
+      // defensively (older k6 versions used keyed objects) rather than
+      // assuming one, since assuming wrong here previously produced numeric
+      // index names ("0", "1") instead of real check names, or nothing at
+      // all. Also computes passRate here — the report table reads it directly.
       `  var __ptaasChecks = [];\n` +
-      `  try { if (data && data.checks) { Object.entries(data.checks).forEach(function(ce) { var cn = ce[0], chk = ce[1]; __ptaasChecks.push({ name: cn, passes: chk.passes || 0, fails: chk.fails || 0, passed: (chk.fails || 0) === 0 }); }); } } catch(__ptaasErr) {}\n` +
+      `  try {\n` +
+      `    var __ptaasPushCheck = function(cn, chk) {\n` +
+      `      var p = chk.passes || 0, f = chk.fails || 0;\n` +
+      `      __ptaasChecks.push({ name: chk.name || chk.path || cn, passes: p, fails: f, passed: f === 0, passRate: (p + f) > 0 ? (p / (p + f)) * 100 : 100 });\n` +
+      `    };\n` +
+      `    var __ptaasCollectChecks = function(g) {\n` +
+      `      if (!g) return;\n` +
+      `      if (Array.isArray(g.checks)) { g.checks.forEach(function(chk) { __ptaasPushCheck(chk.name, chk); }); }\n` +
+      `      else if (g.checks) { Object.entries(g.checks).forEach(function(ce) { __ptaasPushCheck(ce[0], ce[1]); }); }\n` +
+      `      if (Array.isArray(g.groups)) { g.groups.forEach(__ptaasCollectChecks); }\n` +
+      `      else if (g.groups) { Object.values(g.groups).forEach(__ptaasCollectChecks); }\n` +
+      `    };\n` +
+      `    if (data && data.root_group) { __ptaasCollectChecks(data.root_group); }\n` +
+      `  } catch(__ptaasErr) {}\n` +
       `  console.log('PTAAS_SUMMARY:' + JSON.stringify({ thresholdResults: __ptaasThresh, checkResults: __ptaasChecks }));\n`;
 
     const hsFuncRe = /export\s+(?:async\s+)?function\s+handleSummary\s*\(\s*(\w+)\s*\)\s*\{/;
