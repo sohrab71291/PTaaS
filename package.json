@@ -8,9 +8,10 @@
     "agent"
   ],
   "scripts": {
-    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev": "concurrently -n backend,frontend,agent -c blue,green,magenta \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:agent\"",
     "dev:frontend": "wait-on -t 60000 http://localhost:3001/api/health && cd frontend && npm run dev",
     "dev:backend": "cd backend && npm run dev",
+    "dev:agent": "wait-on -t 60000 http://localhost:3001/api/health && cd agent && npm run dev",
     "agent:start": "cd agent && npm start",
     "install:all": "npm install",
     "setup": "powershell -ExecutionPolicy Bypass -File setup.ps1",

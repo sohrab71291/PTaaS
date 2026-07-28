@@ -81,7 +81,6 @@ function stripAuthHeaders(headers: Record<string, string>): Record<string, strin
 // response's csrf-token header) — it must never carry a stale/"null"
 // x-csrf-token captured from the HAR, and it needs x-http-method-override
 // instead, per explicit product requirement:
-//   Cookie:                 __ArcherSessionCookie__=<token>
 //   x-http-method-override: GET
 //   Content-Type:           application/json
 const MODULE_RECORD_ACCESS_RE = /GetModuleRecordAccess/i;
@@ -89,8 +88,6 @@ const MODULE_RECORD_ACCESS_RE = /GetModuleRecordAccess/i;
 // STRICT HEADER ALLOWLIST for every non-login replay call — per explicit
 // product requirement, the generated script must carry ONLY these headers
 // on non-login requests, taken from the HAR exactly as specified:
-//   - Cookie: ONLY the __ArcherSessionCookie__=<token> value (never any other
-//     cookie captured on the request)
 //   - x-csrf-token: verbatim from the HAR's own Header section
 //   - Content-Type: application/json (fixed, not the HAR's captured mimeType)
 //   - x-archer-source: verbatim from the HAR's own Header section, when
@@ -104,19 +101,26 @@ const MODULE_RECORD_ACCESS_RE = /GetModuleRecordAccess/i;
 //     present — only some classic endpoints send it (e.g. ConsumerResources),
 //     others legitimately omit it (e.g. ConsumerGroups), so it must be
 //     copied per-call rather than assumed universal.
+// Cookie is deliberately NEVER baked in here — the __ArcherSessionCookie__
+// literal captured in the HAR is stale by replay time, and freezing a Cookie
+// string at generation time (or even once at runtime login) also permanently
+// hides any OTHER session cookie the app sets later mid-flow (e.g. Archer's
+// ngrx/Angular surface issues its own archer_ngrx_* JWT cookie via a
+// bootstrap call sometime after login, not at login itself) — an explicit
+// Cookie header always wins over whatever a k6 cookie jar would have sent, so
+// baking one here would silently suppress that cookie for the rest of the
+// run. The REPLAY HARNESS PATTERN's runtime cookie jar (passed to every
+// request, including login/reauth) is the sole source of Cookie instead — it
+// accumulates every Set-Cookie exactly like a real browser would.
 // Every other header key present in the HAR is ignored outright.
 function buildReplayHeaders(tc: ParsedTestCase): Record<string, string> {
-  const cookie = tc.archerSessionToken ? `__ArcherSessionCookie__=${tc.archerSessionToken}` : undefined;
   const findHeader = (name: string) => Object.entries(tc.headers).find(([k]) => k.toLowerCase() === name)?.[1];
 
   if (MODULE_RECORD_ACCESS_RE.test(tc.url)) {
-    const headers: Record<string, string> = { 'x-http-method-override': 'GET', 'Content-Type': 'application/json' };
-    if (cookie) headers.Cookie = cookie;
-    return headers;
+    return { 'x-http-method-override': 'GET', 'Content-Type': 'application/json' };
   }
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (cookie) headers.Cookie = cookie;
   const csrfToken = findHeader('x-csrf-token');
   if (csrfToken) headers['x-csrf-token'] = csrfToken;
   const archerSource = findHeader('x-archer-source');
@@ -222,7 +226,7 @@ ${useCsvCredentials
 14. Every VU must use its own cookie jar, never one shared object handed down from setup() — reproduce getVuJar() from the REPLAY HARNESS PATTERN below verbatim and call it in sessionReplay(); do NOT read a jar off setupData.
 15. RE-AUTH ON 401/403 is MANDATORY — reproduce replayStep exactly as shown in the REPLAY HARNESS PATTERN below: on a 401 OR 403 response, call reauth() once, rebuild the request's auth headers from the result, and retry the SAME request exactly once before falling through to normal check()/metrics/error-logging on whichever response (original or retried) is now current. Never retry more than once per step — a second consecutive 401/403 is a real failure, not a transient token expiry.
 16. Per-request response-time checks must use effectiveResponseThreshold(reqDef) (see REPLAY HARNESS PATTERN), NEVER the raw reqDef.responseThresholdMs directly — a single captured HAR sample under no concurrent load is not a reliable per-request SLA under real replay load, and using it verbatim produces noisy false-positive check failures unrelated to actual regressions.
-17. CSRF PROPAGATION IS MANDATORY whenever any captured call targets .../api/internal/Permission/GetModuleRecordAccess — reproduce the module-level \`__csrfToken\` variable and \`captureCsrfToken(reqDef, response)\` from the REPLAY HARNESS PATTERN below verbatim, call it in replayStep right after the response comes back (both the initial and any 401-retry response), and override the request's x-csrf-token header with \`__csrfToken\` whenever it is non-empty — this MUST take priority over any x-csrf-token value baked into reqDef.headers from the HAR capture, which is a stale snapshot from capture time. Do not scope __csrfToken per-iteration (unlike correlationVars) — like the session cookie, it stays valid across iterations once obtained. A csrf token is bound to the specific session that produced it — reproduce \`findModuleRecordAccessRequest()\`/\`refreshCsrfToken(jar, authHeaders)\` verbatim too, and call \`refreshCsrfToken(jar, authHeadersFromAuth(__vuAuth))\` at the END of reauth(), right after \`__vuAuth\` is reassigned to the fresh session — otherwise the retried request after a reauth() sends a (new session, old csrf) pair, which Archer's classic /api/* gateway rejects with a generic IIS 403 that looks like a permissions error but is actually this exact mismatch.
+17. CSRF PROPAGATION IS MANDATORY for every captured session, regardless of whether it happens to include a call to .../api/internal/Permission/GetModuleRecordAccess — reproduce the module-level \`__csrfToken\` variable and \`captureCsrfToken(reqDef, response)\` from the REPLAY HARNESS PATTERN below verbatim, call it in replayStep right after EVERY response comes back (both the initial and any 401-retry response, from ANY captured call, not just GetModuleRecordAccess — Archer's classic /api/* gateway rotates the csrf token on responses generally, and GetModuleRecordAccess is only a common source of it, not the sole one; a captured session that happens not to include it must still be able to obtain a valid token from whichever calls it DOES have), and override the request's x-csrf-token header with \`__csrfToken\` whenever it is non-empty — this MUST take priority over any x-csrf-token value baked into reqDef.headers from the HAR capture, which is a stale snapshot from capture time bound to a completely different (dead) session; a script that never overrides it for lack of a GetModuleRecordAccess call in the capture will send that stale literal on every classic /api/* call and 403 permanently. Do not scope __csrfToken per-iteration (unlike correlationVars) — like the session cookie, it stays valid across iterations once obtained. A csrf token is bound to the specific session that produced it — reproduce \`findCsrfPrimingRequest()\`/\`refreshCsrfToken(jar, authHeaders)\` verbatim too, and call \`refreshCsrfToken(jar, authHeadersFromAuth(__vuAuth))\` at the END of reauth(), right after \`__vuAuth\` is reassigned to the fresh session — otherwise the retried request after a reauth() sends a (new session, old csrf) pair, which Archer's classic /api/* gateway rejects with a generic IIS 403 that looks like a permissions error but is actually this exact mismatch.
 18. EXECUTION ORDER MUST MATCH THE HAR CAPTURE ORDER — CAPTURED_REQUESTS is already injected in the exact order the calls were captured (see its shape description above). Reproduce sessionReplay's loop EXACTLY as shown in the REPLAY HARNESS PATTERN below: a plain sequential \`for (let i = 0; i < replayRequests.length; i++)\` over the array as given, calling replayStep(replayRequests[i], ...) and letting that request's response come back (k6's http.request() is already synchronous/blocking, so this happens naturally) before moving on to i+1. Do NOT sort, group by method/endpoint, batch, deduplicate further, reverse, or otherwise reorder CAPTURED_REQUESTS or replayRequests in any way — a captured Login→CreateRecord→DeleteRecord flow depends on that exact sequence (e.g. DeleteRecord referencing an id CreateRecord just produced via ID CORRELATION per rule 13); replaying out of order breaks the flow even if every individual request is otherwise correct.
 
 ${buildInfluxBlock(baseUrl)}
@@ -266,6 +270,10 @@ function sanitizeHeaders(headers) {
   // user-agent/origin/referer are stripped outright too — per requirement,
   // requests must never carry these, and k6 supplies its own default
   // User-Agent when none is set rather than the request being sent bare.
+  // cookie is ALSO stripped unconditionally — Cookie must come from the
+  // runtime cookie jar exclusively (see buildReplayHeaders' comment above),
+  // never from a captured/static value, so any Cookie key that somehow ends
+  // up in reqDef.headers must never reach the actual request.
   const sanitized = {};
   if (!headers) return sanitized;
   Object.keys(headers).forEach(function (name) {
@@ -273,7 +281,8 @@ function sanitizeHeaders(headers) {
     if (value === undefined || value === null || String(value).trim() === '') return;
     const normalizedName = String(name).toLowerCase();
     if (normalizedName === 'content-length' || normalizedName === 'transfer-encoding'
-      || normalizedName === 'user-agent' || normalizedName === 'origin' || normalizedName === 'referer') return;
+      || normalizedName === 'user-agent' || normalizedName === 'origin' || normalizedName === 'referer'
+      || normalizedName === 'cookie') return;
     sanitized[name] = value;
   });
   return sanitized;
@@ -328,28 +337,40 @@ function captureCorrelationVars(reqDef, response, correlationVars) {
   });
 }
 
-// GetModuleRecordAccess is the call that PRODUCES the csrf token used by every
-// later authenticated request — its response carries the fresh token in a
-// 'csrf-token' response header. Module-scoped (not correlationVars-scoped)
-// because it behaves like the session cookie: once obtained it stays valid
-// for the rest of this VU's session, not just the current iteration. NEVER
-// falls back to a captured/HAR literal — a stale csrf token gets rejected by
-// the server just like an expired session would.
+// Archer's classic /api/* gateway rotates the csrf token on responses —
+// GetModuleRecordAccess is a common source of it (it's usually the first
+// classic-API call a session makes), but it is NOT the only one and is NOT
+// guaranteed to be present in every captured session (e.g. a session that
+// starts mid-flow, or where the app cached that lookup client-side). Treating
+// it as the sole source means a capture that happens to omit it has NO way to
+// ever obtain a valid token — every classic /api/* call then falls back to
+// the stale literal baked into reqDef.headers from HAR capture time, which is
+// bound to a completely different (dead) session and gets rejected outright.
+// Capture the header from ANY authenticated response that has one instead —
+// module-scoped (not correlationVars-scoped) because it behaves like the
+// session cookie: once obtained it stays valid for the rest of this VU's
+// session, not just the current iteration. NEVER falls back to a captured/HAR
+// literal — a stale csrf token gets rejected by the server just like an
+// expired session would.
 let __csrfToken = '';
 function captureCsrfToken(reqDef, response) {
-  if (!/GetModuleRecordAccess/i.test(String(reqDef.path || ''))) return;
   const token = response.headers['csrf-token'] || response.headers['Csrf-Token'] || response.headers['CSRF-Token'];
-  if (token) {
+  if (token && token !== __csrfToken) {
     __csrfToken = token;
     console.log('VU ' + __VU + ': captured fresh csrf-token from ' + reqDef.name);
   }
 }
 
-// Finds the captured GetModuleRecordAccess entry in CAPTURED_REQUESTS, if any
-// was captured. Used by reauth() below — never throws, just returns null when
-// this session's HAR capture never hit that endpoint.
-function findModuleRecordAccessRequest() {
-  return CAPTURED_REQUESTS.find(function (r) { return /GetModuleRecordAccess/i.test(String(r.path || '')); }) || null;
+// Picks a request to replay standalone in order to obtain a fresh csrf token
+// after reauth() — prefers GetModuleRecordAccess when the capture has one
+// (a lightweight, side-effect-free lookup), otherwise falls back to the
+// first captured entry (any authenticated classic /api/* or /ngrx/* call's
+// response can carry a rotated token). Never throws — returns null only if
+// CAPTURED_REQUESTS is itself empty.
+function findCsrfPrimingRequest() {
+  return CAPTURED_REQUESTS.find(function (r) { return /GetModuleRecordAccess/i.test(String(r.path || '')); })
+    || CAPTURED_REQUESTS[0]
+    || null;
 }
 
 // A csrf token is bound to the session that produced it — the moment reauth()
@@ -359,10 +380,11 @@ function findModuleRecordAccessRequest() {
 // generic IIS 403 "Forbidden: Access is denied" page — NOT a 401, so it is
 // easy to mistake for a permissions issue rather than what it actually is:
 // a stale csrf token left over from the session that just expired. Re-running
-// the captured GetModuleRecordAccess call with the FRESH session immediately
-// after reauth() fixes this by re-priming __csrfToken to match.
+// a captured request with the FRESH session immediately after reauth() fixes
+// this by re-priming __csrfToken to match (see findCsrfPrimingRequest above
+// for which request gets used).
 function refreshCsrfToken(jar, authHeaders) {
-  const reqDef = findModuleRecordAccessRequest();
+  const reqDef = findCsrfPrimingRequest();
   if (!reqDef) return;
   const headers = Object.assign({}, sanitizeHeaders(reqDef.headers), authHeaders);
   const res = http.request(
@@ -407,23 +429,28 @@ function effectiveResponseThreshold(reqDef) {
   return Math.max(reqDef.responseThresholdMs, RESPONSE_THRESHOLD_FLOOR_MS);
 }
 
-function buildCookieHeader(response, fallbackToken, loginRequest) {
-  // Prefer real Set-Cookie cookies from the login response (k6 exposes these
-  // on response.cookies regardless of the VU cookie jar) — this is what a
-  // browser would actually send. Fall back to a cookie built from the
-  // extracted token using cookieNameHint (or 'session') so cookie-based
-  // session APIs still work when the token only appears in the JSON body.
-  const cookieParts = [];
+// Returns [{name, value}] from a login-shaped response's real Set-Cookie
+// values — k6 exposes response.cookies regardless of whether the request
+// used a jar, which matters for setup()'s ONE jar-less shared login call.
+// Falls back to a single synthetic pair built from the extracted token (using
+// cookieNameHint, or 'session') ONLY when the login returned it purely in the
+// JSON body with no Set-Cookie at all. Callers seed a cookie jar from this —
+// see ensureAuth()/reauth() below — rather than ever building a static Cookie
+// header string (a frozen header always wins over the jar and would silently
+// hide any OTHER cookie the app sets later, e.g. an ngrx JWT cookie minted by
+// a bootstrap call after login rather than by login itself).
+function extractLoginCookies(response, fallbackToken, loginRequest) {
+  const pairs = [];
   if (response && response.cookies) {
     Object.keys(response.cookies).forEach(function (cookieName) {
       const cookie = response.cookies[cookieName][0];
-      if (cookie) cookieParts.push(cookieName + '=' + cookie.value);
+      if (cookie) pairs.push({ name: cookieName, value: cookie.value });
     });
   }
-  if (cookieParts.length === 0 && fallbackToken) {
-    cookieParts.push((loginRequest && loginRequest.cookieNameHint ? loginRequest.cookieNameHint : 'session') + '=' + fallbackToken);
+  if (pairs.length === 0 && fallbackToken) {
+    pairs.push({ name: (loginRequest && loginRequest.cookieNameHint) ? loginRequest.cookieNameHint : 'session', value: fallbackToken });
   }
-  return cookieParts.join('; ');
+  return pairs;
 }
 
 Write this helper once, before setup() too — k6's setup() runs ONCE for the
@@ -489,9 +516,14 @@ function extractJwt(body) {
     body.Jwt || body.jwt || body.AccessToken || ''
   );
 }
+// Deliberately never sets a Cookie header — Cookie comes exclusively from the
+// per-VU cookie jar (seeded/refreshed by ensureAuth()/reauth() above), which
+// every request already carries via { jar: jar }. Setting one here would
+// override the jar's actual contents (an explicit Cookie header always wins),
+// silently hiding any cookie the app sets mid-session (see extractLoginCookies'
+// comment above).
 function authHeadersFromAuth(auth) {
   const headers = {};
-  if (auth && auth.cookieHeader) headers.Cookie = auth.cookieHeader;
   if (auth && auth.jwt) headers.Authorization = 'Bearer ' + auth.jwt;
   return headers;
 }
@@ -504,7 +536,8 @@ but do NOT create or return a cookie jar here: a jar created in setup() is the
 exact same mutable object handed to every VU via setupData, so one VU's
 responses would silently populate cookies another VU's requests then pick up.
 Each VU gets its own jar lazily via getVuJar() (declared above) instead —
-only the resulting cookieHeader/jwt (immutable strings, safe to share) are
+only the resulting cookies array/jwt (immutable data, safe to share — each VU
+seeds ITS OWN jar from the cookies array via ensureAuth(), see below) are
 threaded through setupData. Use findLoginRequest() to find the login call — if
 it returns null, there is genuinely nothing to authenticate with, so log that
 and continue:
@@ -538,20 +571,20 @@ export function setup() {
   const body = getResponseBody(res);
   const sessionToken = extractSessionToken(body);
   const jwt = extractJwt(body);
-  const cookieHeader = buildCookieHeader(res, sessionToken, effectiveLoginRequest);
+  const cookies = extractLoginCookies(res, sessionToken, effectiveLoginRequest);
 
   // NEVER throw here, even when the login produced nothing usable — a broken
   // or expired captured login must degrade to "requests run unauthenticated"
   // (later calls will now correctly surface as REAL 401/403 failures — see
   // isResponseStatusExpected — instead of stopping the whole run before any
   // other request gets a chance to execute).
-  if (!cookieHeader && !jwt && !(res.status >= 300 && res.status < 400)) {
+  if (cookies.length === 0 && !jwt && !(res.status >= 300 && res.status < 400)) {
     console.warn('Setup: authentication request returned no session data; continuing without auth headers.');
     return null;
   }
 
   console.log('Setup: authentication completed with status ' + res.status + '.' + (jwt ? ' (session cookie + bearer JWT)' : ''));
-  return { cookieHeader: cookieHeader, jwt: jwt };
+  return { cookies: cookies, jwt: jwt };
 }
 
 Write these two helpers once, before setup() — every VU starts from the ONE
@@ -561,18 +594,24 @@ moment its session actually expires, via reauth() (see replayStep's 401 retry
 below) — never a second run-wide relogin shared by every VU:
 
 let __vuAuth = null; // per-VU cache — module scope is per-VU in k6, so this is NOT shared across VUs
-function ensureAuth(setupData) {
+function ensureAuth(setupData, jar) {
   if (__vuAuth) return __vuAuth;
-  __vuAuth = (setupData && (setupData.cookieHeader || setupData.jwt))
-    ? { cookieHeader: setupData.cookieHeader || '', jwt: setupData.jwt || '' }
-    : { cookieHeader: '', jwt: '' };
+  // Seed THIS VU's own jar from setup()'s single shared login (setup() has no
+  // jar of its own — see its comment above — so this is the first time these
+  // cookies attach to any jar). Every later request passes { jar: jar }, so
+  // from here on the jar is the sole source of Cookie — never a static string.
+  if (setupData && Array.isArray(setupData.cookies)) {
+    setupData.cookies.forEach(function (c) { jar.set(BASE_URL, c.name, c.value); });
+  }
+  __vuAuth = { jwt: (setupData && setupData.jwt) || '' };
   return __vuAuth;
 }
 function reauth() {
   console.warn('VU ' + __VU + ': got 401 — re-authenticating.');
   const effectiveLoginRequest = findLoginRequest(CAPTURED_REQUESTS);
+  const jar = getVuJar();
   if (!effectiveLoginRequest) {
-    __vuAuth = { cookieHeader: '', jwt: '' };
+    __vuAuth = { jwt: '' };
     return __vuAuth;
   }
   // The server responds to an unauthenticated/expired-session call by setting
@@ -582,7 +621,6 @@ function reauth() {
   // along next to the brand-new session cookie on every subsequent request,
   // causing an immediate re-401 regardless of how valid the fresh session is.
   // Wipe the jar for BASE_URL before re-login so only the fresh cookie survives.
-  const jar = getVuJar();
   const stale = jar.cookiesForURL(BASE_URL) || {};
   Object.keys(stale).forEach(function (name) {
     jar.set(BASE_URL, name, '', { expires: new Date(0).toUTCString() });
@@ -596,7 +634,14 @@ function reauth() {
   const body = getResponseBody(res);
   const sessionToken = extractSessionToken(body);
   const jwt = extractJwt(body);
-  __vuAuth = { cookieHeader: buildCookieHeader(res, sessionToken, effectiveLoginRequest), jwt: jwt };
+  // Set-Cookie from this response already landed in the jar automatically since
+  // the request above ran with { jar } — this loop only matters for the
+  // fallback case (session token returned purely in the JSON body, no
+  // Set-Cookie at all); re-setting already-present cookies here is harmless.
+  extractLoginCookies(res, sessionToken, effectiveLoginRequest).forEach(function (c) {
+    jar.set(BASE_URL, c.name, c.value);
+  });
+  __vuAuth = { jwt: jwt };
   console.log('VU ' + __VU + ': re-authenticated (status ' + res.status + ').');
 
   // The OLD __csrfToken (from the session that just expired) is invalid for
@@ -625,7 +670,7 @@ request's x-csrf-token header MUST be overridden with __csrfToken whenever it
 is non-empty, taking priority over any x-csrf-token baked into reqDef.headers
 from the HAR capture; that baked value is a snapshot from capture time and
 becomes stale/invalid the moment a fresh one is issued during replay.
-RE-AUTH ON 401 is MANDATORY (rule 15) — build auth headers via ensureAuth()${useCsvCredentials ? '' : '(setupData)'}/authHeadersFromAuth() fresh for every request (not once per iteration — a cached auth object can be replaced mid-iteration by reauth()), and on a 401 call reauth() and retry the SAME request exactly once with the refreshed headers before falling through to normal check()/metrics/error-logging:
+RE-AUTH ON 401 is MANDATORY (rule 15) — build auth headers via ensureAuth()${useCsvCredentials ? '' : '(setupData, jar)'}/authHeadersFromAuth() fresh for every request (not once per iteration — a cached auth object can be replaced mid-iteration by reauth()), and on a 401 call reauth() and retry the SAME request exactly once with the refreshed headers before falling through to normal check()/metrics/error-logging:
 
 function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correlationVars) {
   const path = substituteCorrelationVars(reqDef.path, correlationVars);
@@ -654,7 +699,7 @@ function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correl
     return http.request(reqDef.method, url, requestBody(payload, reqDef.payloadType), params);
   }
 
-  let auth = ensureAuth(${useCsvCredentials ? '' : 'setupData'});
+  let auth = ensureAuth(${useCsvCredentials ? '' : 'setupData, jar'});
   let res = doRequest(authHeadersFromAuth(auth));
 
   // A 30-min (or otherwise time-limited) token can expire mid-run — a bare
@@ -667,9 +712,10 @@ function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correl
     res = doRequest(authHeadersFromAuth(auth));
   }
 
-  // Must run before check()/metrics below — if THIS step is the
-  // GetModuleRecordAccess call, every subsequent replayStep() call (including
-  // later ones in this same loop) needs the token it just produced.
+  // Must run before check()/metrics below — if THIS response carries a fresh
+  // csrf-token (any call can, not just GetModuleRecordAccess), every
+  // subsequent replayStep() call (including later ones in this same loop)
+  // needs the token it just produced.
   captureCsrfToken(reqDef, res);
 
   // A captured call that 404s on a known-benign endpoint (see

@@ -44,6 +44,37 @@ function fmtDecimalRate(v: number | null | undefined): string {
   return `${(v * 100).toFixed(2)}%`;
 }
 
+interface MsThresholdLimits { avg: number | null; p90: number | null; p95: number | null; }
+
+// Parses k6's own evaluated threshold conditions (e.g. "p(95)<800", "avg<500")
+// out of thresholdResults — the actual thresholds configured in Test Authoring
+// for this execution, as k6 itself evaluated them — to find the strictest
+// configured limit for avg/p90/p95 response time, in ms, so the per-endpoint
+// table can flag exactly which endpoints are responsible for a breach (k6
+// thresholds are aggregate/scenario-level, not per-endpoint, so this applies
+// the same configured limit to every row rather than needing a per-endpoint
+// threshold that doesn't exist). Metric names ending in _seconds (this app's
+// own k6_http_req_duration_seconds Trend, see k6PromptBlocks.ts) are
+// normalized ×1000 to match the ms values already used throughout this table;
+// k6's native http_req_duration is already ms.
+function extractMsThresholds(thresholdResults: any[]): MsThresholdLimits {
+  const limits: MsThresholdLimits = { avg: null, p90: null, p95: null };
+  if (!Array.isArray(thresholdResults)) return limits;
+  for (const t of thresholdResults) {
+    const metric = String(t?.metric ?? '');
+    const condition = String(t?.condition ?? '');
+    const match = condition.match(/^(avg|p\(90\)|p\(95\))\s*<\s*([\d.]+)/i);
+    if (!match) continue;
+    const key: keyof MsThresholdLimits = match[1].toLowerCase().startsWith('avg') ? 'avg' : match[1].includes('90') ? 'p90' : 'p95';
+    let limit = parseFloat(match[2]);
+    if (!Number.isFinite(limit)) continue;
+    if (/_seconds\b/i.test(metric)) limit *= 1000;
+    // Strictest configured limit wins if the same stat is thresholded more than once.
+    if (limits[key] == null || limit < (limits[key] as number)) limits[key] = limit;
+  }
+  return limits;
+}
+
 interface Finding {
   severity: 'critical' | 'warning' | 'info';
   message: string;
@@ -57,10 +88,13 @@ function generateFindings(
   checkResults: any[],
 ): Finding[] {
   const findings: Finding[] = [];
-  // Use grafanaMetrics.errorRate (0-1 decimal) or fall back to metrics.errorRate (%)
-  const errorRatePct = grafanaMetrics
-    ? grafanaMetrics.errorRate * 100
-    : (metrics?.errorRate ?? null);
+  // Prefer this execution's own recorded error rate (same value the Executor
+  // page showed, and same source used for dispErrPct above) over recomputing
+  // from grafanaMetrics/requestsRaw — that recomputation uses different
+  // pass/fail semantics (isResponseStatusExpected()'s allowances for known-
+  // benign 404s/redirects) and can show 0% here even when k6 itself recorded
+  // real failures, which silently suppressed the error-rate finding below.
+  const errorRatePct = metrics?.errorRate ?? (grafanaMetrics ? grafanaMetrics.errorRate * 100 : null);
   const p95 = grafanaMetrics?.p95 ?? metrics?.p95 ?? null;
 
   const failedThresholds = thresholdResults.filter(t => !t.passed);
@@ -218,6 +252,8 @@ export const ReportView: React.FC = () => {
     Array.isArray(checkResults)     ? checkResults     : [],
   );
 
+  const msLimits = extractMsThresholds(Array.isArray(thresholdResults) ? thresholdResults : []);
+
   const reportRef    = `PTR-${execution.id.slice(0, 8).toUpperCase()}`;
   const generatedAt  = new Date().toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' });
 
@@ -228,10 +264,23 @@ export const ReportView: React.FC = () => {
   const dispP99        = gm?.p99          ?? metrics?.p99          ?? null;
   const dispAvg        = gm?.avgResponseTime ?? metrics?.avg        ?? null;
   const dispRps        = gm?.rps          ?? metrics?.rps          ?? null;
-  const dispErrPct     = gm != null ? gm.errorRate * 100 : (metrics?.errorRate ?? null);
-  const dispSuccessPct = gm != null ? gm.successRate * 100 : (dispErrPct != null ? 100 - dispErrPct : null);
+  // Error rate is the one field that must match the Executor page, NOT be
+  // recomputed from requestsRaw here — the backend (routes/reports.ts) already
+  // prefers this execution's own recorded error rate over a requestsRaw
+  // recomputation (which uses different pass/fail semantics and can diverge),
+  // so `metrics.errorRate` is already the correct, Executor-matching value.
+  const dispErrPct     = metrics?.errorRate ?? (gm != null ? gm.errorRate * 100 : null);
+  // Success rate and error count are ALWAYS derived from dispErrPct (never
+  // independently from gm.successRate/gm.errorsCount) — those are computed
+  // from requestsRaw's own pass/fail tagging, a different source than
+  // dispErrPct's now-authoritative execution-recorded value, and displaying
+  // both side by side previously showed self-contradictory numbers (e.g.
+  // "100% success" next to "7.55% error rate" for the same run).
+  const dispSuccessPct = dispErrPct != null ? 100 - dispErrPct : null;
   const dispReqCount   = gm?.requestCount ?? metrics?.totalRequests ?? null;
-  const dispErrCount   = gm?.errorsCount  ?? null;
+  const dispErrCount   = dispErrPct != null && dispReqCount != null
+    ? Math.round((dispErrPct / 100) * dispReqCount)
+    : null;
   const dispMaxVUs     = gm?.maxVUs       ?? metrics?.maxVUs        ?? null;
   // Duration: prefer requestsRaw data span (matches Grafana) over DB execution.duration
   const dispDurationSecs = gm?.duration != null
@@ -538,13 +587,16 @@ export const ReportView: React.FC = () => {
                 <tbody>
                   {gm.endpoints.map((ep: any, i: number) => {
                     const errPct = ep.errorRate * 100;
+                    const avgBreached = msLimits.avg != null && ep.avg > msLimits.avg;
+                    const p90Breached = msLimits.p90 != null && ep.p90 > msLimits.p90;
+                    const p95Breached = msLimits.p95 != null && ep.p95 > msLimits.p95;
                     return (
                       <tr key={i} className={`border-b border-gray-100 ${errPct > 0 ? 'bg-red-50' : i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
                         <td className="px-4 py-2.5 font-mono text-xs text-gray-800 max-w-xs truncate">{ep.requestName}</td>
                         <td className="px-4 py-2.5 text-right text-xs text-gray-700 font-medium">{ep.count.toLocaleString()}</td>
-                        <td className="px-4 py-2.5 text-right text-xs text-gray-700">{ep.avg}</td>
-                        <td className="px-4 py-2.5 text-right text-xs text-gray-700">{ep.p90}</td>
-                        <td className="px-4 py-2.5 text-right text-xs font-semibold text-gray-800">{ep.p95}</td>
+                        <td className={`px-4 py-2.5 text-right text-xs ${avgBreached ? 'text-red-600 font-bold' : 'text-gray-700'}`}>{ep.avg}</td>
+                        <td className={`px-4 py-2.5 text-right text-xs ${p90Breached ? 'text-red-600 font-bold' : 'text-gray-700'}`}>{ep.p90}</td>
+                        <td className={`px-4 py-2.5 text-right text-xs font-semibold ${p95Breached ? 'text-red-600 font-bold' : 'text-gray-800'}`}>{ep.p95}</td>
                         <td className="px-4 py-2.5 text-right">
                           <div className="flex items-center justify-end gap-2">
                             <div className="w-16 bg-gray-200 rounded-full h-1.5">
@@ -566,9 +618,9 @@ export const ReportView: React.FC = () => {
                   <tr>
                     <td className="px-4 py-2.5 text-xs font-bold text-gray-700 uppercase">Total</td>
                     <td className="px-4 py-2.5 text-right text-xs font-bold text-gray-800">{gm.requestCount.toLocaleString()}</td>
-                    <td className="px-4 py-2.5 text-right text-xs font-bold text-gray-800">{gm.avgResponseTime}</td>
-                    <td className="px-4 py-2.5 text-right text-xs font-bold text-gray-800">{gm.p90}</td>
-                    <td className="px-4 py-2.5 text-right text-xs font-bold text-gray-800">{gm.p95}</td>
+                    <td className={`px-4 py-2.5 text-right text-xs font-bold ${msLimits.avg != null && gm.avgResponseTime > msLimits.avg ? 'text-red-600' : 'text-gray-800'}`}>{gm.avgResponseTime}</td>
+                    <td className={`px-4 py-2.5 text-right text-xs font-bold ${msLimits.p90 != null && gm.p90 > msLimits.p90 ? 'text-red-600' : 'text-gray-800'}`}>{gm.p90}</td>
+                    <td className={`px-4 py-2.5 text-right text-xs font-bold ${msLimits.p95 != null && gm.p95 > msLimits.p95 ? 'text-red-600' : 'text-gray-800'}`}>{gm.p95}</td>
                     <td className="px-4 py-2.5 text-right text-xs font-bold text-gray-800">{(gm.errorRate * 100).toFixed(2)}%</td>
                   </tr>
                 </tfoot>
@@ -694,6 +746,7 @@ export const ReportView: React.FC = () => {
             <>
               <p className="text-xs text-gray-500 mb-4">
                 k6 checks verify functional correctness of responses under load. A pass rate below 100% indicates regressions.
+                {execution.checksFailed > 0 && ' Failing checks are listed first below.'}
               </p>
               <div className="flex gap-4 mb-4">
                 <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-1.5">
@@ -715,28 +768,38 @@ export const ReportView: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {checkResults.map((c: any, i: number) => (
-                      <tr key={i} className={`border-b border-gray-100 ${!c.passed ? 'bg-red-50' : ''}`}>
-                        <td className="px-4 py-3 text-xs text-gray-700">{c.name}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 bg-gray-200 rounded-full h-2">
-                              <div
-                                className={`h-2 rounded-full ${c.passRate >= 95 ? 'bg-green-500' : c.passRate >= 80 ? 'bg-amber-500' : 'bg-red-500'}`}
-                                style={{ width: `${c.passRate}%` }}
-                              />
+                    {[...checkResults]
+                      .sort((a: any, b: any) => (a.passed === b.passed ? 0 : a.passed ? 1 : -1) || (b.fails ?? 0) - (a.fails ?? 0))
+                      .map((c: any, i: number) => {
+                      // Defensive fallback: older persisted checkResults (saved
+                      // before this field existed) may not have passRate —
+                      // compute it from passes/fails rather than reading
+                      // undefined.toFixed(1), which crashed this whole section.
+                      const total = (c.passes ?? 0) + (c.fails ?? 0);
+                      const passRate = c.passRate ?? (total > 0 ? (c.passes / total) * 100 : 100);
+                      return (
+                        <tr key={i} className={`border-b border-gray-100 ${!c.passed ? 'bg-red-50' : ''}`}>
+                          <td className="px-4 py-3 text-xs text-gray-700">{c.name}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1 bg-gray-200 rounded-full h-2">
+                                <div
+                                  className={`h-2 rounded-full ${passRate >= 95 ? 'bg-green-500' : passRate >= 80 ? 'bg-amber-500' : 'bg-red-500'}`}
+                                  style={{ width: `${passRate}%` }}
+                                />
+                              </div>
+                              <span className="text-xs font-medium text-gray-700 w-12 text-right">{passRate.toFixed(1)}%</span>
                             </div>
-                            <span className="text-xs font-medium text-gray-700 w-12 text-right">{c.passRate.toFixed(1)}%</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          {c.passed
-                            ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full"><CheckCircle size={11} /> PASS</span>
-                            : <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full"><XCircle size={11} /> FAIL</span>
-                          }
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            {c.passed
+                              ? <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full"><CheckCircle size={11} /> PASS</span>
+                              : <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-100 px-2 py-0.5 rounded-full"><XCircle size={11} /> FAIL</span>
+                            }
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

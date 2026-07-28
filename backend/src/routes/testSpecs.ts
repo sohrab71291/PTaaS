@@ -5,7 +5,20 @@ import { generateK6Script } from '../services/k6Generator';
 const router = Router();
 
 router.get('/', async (_req: Request, res: Response) => {
-  const specs = await prisma.testSpec.findMany({ orderBy: { createdAt: 'desc' } });
+  // uploadedFiles holds the ORIGINAL captured HAR/JSON file(s) as base64 (see
+  // schema comment) — up to 200MB each, persisted purely so re-opening a
+  // single suite for editing doesn't force a re-upload. The list view never
+  // reads it (only name/description/tags/request/loadProfile/lastRunStatus
+  // etc. — see TestSuites.tsx), but Prisma's default findMany() returns every
+  // column for every row, so a handful of suites with large captures turned
+  // this single list response into 100+MB, which fails outright in the
+  // browser ("Failed to fetch") rather than just being slow. Excluded here;
+  // GET /:id below still returns the full record, including uploadedFiles,
+  // since only one suite's worth is ever needed there.
+  const specs = await prisma.testSpec.findMany({
+    orderBy: { createdAt: 'desc' },
+    omit: { uploadedFiles: true },
+  });
   res.json(specs);
 });
 
