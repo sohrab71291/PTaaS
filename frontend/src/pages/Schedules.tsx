@@ -19,6 +19,15 @@ interface Schedule {
   enabled: boolean;
   notificationConfigId: string | null;
   fetchFromGithub: boolean;
+  scmProvider: 'github' | 'gitlab';
+  githubRepoUrl: string | null;
+  githubBranch: string | null;
+  githubScriptPath: string | null;
+  githubToken: string | null;
+  gitlabRepoUrl: string | null;
+  gitlabBranch: string | null;
+  gitlabScriptPath: string | null;
+  gitlabToken: string | null;
   createdAt: string;
   updatedAt: string;
   lastRunAt: string | null;
@@ -105,6 +114,15 @@ const emptyForm = {
   enabled: true,
   notificationConfigId: '',
   fetchFromGithub: false,
+  scmProvider: 'github' as 'github' | 'gitlab',
+  githubRepoUrl: '',
+  githubBranch: '',
+  githubScriptPath: '',
+  githubToken: '',
+  gitlabRepoUrl: '',
+  gitlabBranch: '',
+  gitlabScriptPath: '',
+  gitlabToken: '',
 };
 
 type CronTab = 'presets' | 'custom' | 'raw';
@@ -125,6 +143,15 @@ const ScheduleModal: React.FC<{
     enabled: schedule.enabled,
     notificationConfigId: schedule.notificationConfigId || '',
     fetchFromGithub: schedule.fetchFromGithub || false,
+    scmProvider: schedule.scmProvider || 'github',
+    githubRepoUrl: schedule.githubRepoUrl || '',
+    githubBranch: schedule.githubBranch || '',
+    githubScriptPath: schedule.githubScriptPath || '',
+    githubToken: schedule.githubToken || '',
+    gitlabRepoUrl: schedule.gitlabRepoUrl || '',
+    gitlabBranch: schedule.gitlabBranch || '',
+    gitlabScriptPath: schedule.gitlabScriptPath || '',
+    gitlabToken: schedule.gitlabToken || '',
   } : emptyForm);
   const [cronTab, setCronTab] = useState<CronTab>('presets');
   const [custom, setCustom] = useState<CustomTime>(defaultCustom);
@@ -143,10 +170,20 @@ const ScheduleModal: React.FC<{
     setError('');
     setLoading(true);
     try {
+      const usingGitlab = form.fetchFromGithub && form.scmProvider === 'gitlab';
+      const usingGithub = form.fetchFromGithub && form.scmProvider !== 'gitlab';
       const body = {
         ...form,
         environmentId: form.environmentId || null,
         notificationConfigId: form.notificationConfigId || null,
+        githubRepoUrl: usingGithub ? (form.githubRepoUrl || null) : null,
+        githubBranch: usingGithub ? (form.githubBranch || null) : null,
+        githubScriptPath: usingGithub ? (form.githubScriptPath || null) : null,
+        githubToken: usingGithub ? (form.githubToken || null) : null,
+        gitlabRepoUrl: usingGitlab ? (form.gitlabRepoUrl || null) : null,
+        gitlabBranch: usingGitlab ? (form.gitlabBranch || null) : null,
+        gitlabScriptPath: usingGitlab ? (form.gitlabScriptPath || null) : null,
+        gitlabToken: usingGitlab ? (form.gitlabToken || null) : null,
       };
       const saved = schedule
         ? await (api as any).schedules.update(schedule.id, body)
@@ -409,9 +446,136 @@ const ScheduleModal: React.FC<{
                 ? <ToggleRight size={22} className="text-brand-500" />
                 : <ToggleLeft size={22} />}
               <Github size={14} />
-              Fetch script from GitHub on each run
+              Fetch script from repo on each run
             </button>
           </div>
+
+          {/* Repo config — shown once fetch-from-repo is enabled */}
+          {form.fetchFromGithub && (
+            <div className="border border-gray-200 rounded-lg p-4 bg-gray-50 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
+                <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5 w-fit">
+                  {(['github', 'gitlab'] as const).map(p => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, scmProvider: p }))}
+                      className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors capitalize ${
+                        form.scmProvider === p ? 'bg-brand-500 text-white' : 'text-gray-500 hover:bg-gray-200'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {form.scmProvider === 'gitlab' ? (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Project</label>
+                    <input
+                      required
+                      value={form.gitlabRepoUrl}
+                      onChange={e => setForm(f => ({ ...f, gitlabRepoUrl: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      placeholder="namespace/project or https://gitlab.com/namespace/project"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Branch <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        value={form.gitlabBranch}
+                        onChange={e => setForm(f => ({ ...f, gitlabBranch: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        placeholder="main"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Script Path <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        value={form.gitlabScriptPath}
+                        onChange={e => setForm(f => ({ ...f, gitlabScriptPath: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        placeholder="scripts/my-test.js"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Access Token <span className="text-gray-400 font-normal">(optional — falls back to server default)</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={form.gitlabToken}
+                      onChange={e => setForm(f => ({ ...f, gitlabToken: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      placeholder={schedule?.gitlabToken ? '••••••••  (unchanged)' : 'glpat-…'}
+                    />
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Repository</label>
+                    <input
+                      required
+                      value={form.githubRepoUrl}
+                      onChange={e => setForm(f => ({ ...f, githubRepoUrl: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      placeholder="owner/repo or https://github.com/owner/repo"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Branch <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        value={form.githubBranch}
+                        onChange={e => setForm(f => ({ ...f, githubBranch: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        placeholder="main"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Script Path <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        value={form.githubScriptPath}
+                        onChange={e => setForm(f => ({ ...f, githubScriptPath: e.target.value }))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-500"
+                        placeholder="scripts/my-test.js"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Access Token <span className="text-gray-400 font-normal">(optional — falls back to server default)</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={form.githubToken}
+                      onChange={e => setForm(f => ({ ...f, githubToken: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+                      placeholder={schedule?.githubToken ? '••••••••  (unchanged)' : 'ghp_…'}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900">
@@ -607,7 +771,7 @@ export const Schedules: React.FC = () => {
                       )}
                       {s.fetchFromGithub && (
                         <span className="flex items-center gap-1 text-xs text-gray-500">
-                          <Github size={12} /> GitHub sync
+                          <Github size={12} /> {s.scmProvider === 'gitlab' ? 'GitLab' : 'GitHub'} sync
                         </span>
                       )}
                     </div>

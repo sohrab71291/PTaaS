@@ -1,14 +1,36 @@
 import { Octokit } from '@octokit/rest';
 
-function getConfig() {
-  const token = process.env.GITHUB_TOKEN;
-  const owner = process.env.GITHUB_OWNER;
-  const repo = process.env.GITHUB_REPO;
-  const branch = process.env.GITHUB_BRANCH || 'main';
+export interface ScheduleGithubConfig {
+  repoUrl?: string | null;
+  branch?: string | null;
+  scriptPath?: string | null;
+  token?: string | null;
+}
+
+// Accepts "owner/repo", a bare "https://github.com/owner/repo(.git)" URL, or an
+// owner/repo pair with extra path segments (e.g. a URL copied with a /tree/branch suffix).
+function parseRepoUrl(repoUrl: string): { owner: string; repo: string } | null {
+  const trimmed = repoUrl.trim().replace(/^https?:\/\/(www\.)?github\.com\//, '').replace(/\.git$/, '');
+  const [owner, repo] = trimmed.split('/');
+  if (!owner || !repo) return null;
+  return { owner, repo };
+}
+
+function getConfig(override?: ScheduleGithubConfig) {
+  const token = override?.token || process.env.GITHUB_TOKEN;
+  const branch = override?.branch || process.env.GITHUB_BRANCH || 'main';
   const scriptsPath = process.env.GITHUB_SCRIPTS_PATH || 'scripts';
 
+  if (override?.repoUrl) {
+    const parsed = parseRepoUrl(override.repoUrl);
+    if (!parsed || !token) return null;
+    return { token, owner: parsed.owner, repo: parsed.repo, branch, scriptsPath, explicitScriptPath: override.scriptPath || null };
+  }
+
+  const owner = process.env.GITHUB_OWNER;
+  const repo = process.env.GITHUB_REPO;
   if (!token || !owner || !repo) return null;
-  return { token, owner, repo, branch, scriptsPath };
+  return { token, owner, repo, branch, scriptsPath, explicitScriptPath: null };
 }
 
 function scriptPath(specId: string, scriptsPath: string): string {
@@ -60,14 +82,14 @@ export async function pushScript(specId: string, content: string, message: strin
   }
 }
 
-export async function fetchScript(specId: string): Promise<string> {
-  const config = getConfig();
+export async function fetchScript(specId: string, override?: ScheduleGithubConfig): Promise<string> {
+  const config = getConfig(override);
   if (!config) {
-    throw new Error('GitHub not configured — set GITHUB_TOKEN, GITHUB_OWNER, GITHUB_REPO');
+    throw new Error('GitHub not configured — set a repo URL + token on the schedule, or GITHUB_TOKEN/GITHUB_OWNER/GITHUB_REPO env vars');
   }
 
   const octokit = new Octokit({ auth: config.token });
-  const path = scriptPath(specId, config.scriptsPath);
+  const path = config.explicitScriptPath || scriptPath(specId, config.scriptsPath);
 
   const res = await octokit.repos.getContent({
     owner: config.owner,

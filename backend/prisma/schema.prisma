@@ -123,6 +123,15 @@ model Schedule {
   enabled              Boolean     @default(true)
   notificationConfigId String?
   fetchFromGithub      Boolean     @default(false)
+  scmProvider          String      @default("github")
+  githubRepoUrl        String?
+  githubBranch         String?
+  githubScriptPath     String?
+  githubToken          String?
+  gitlabRepoUrl        String?
+  gitlabBranch         String?
+  gitlabScriptPath     String?
+  gitlabToken          String?
   lastRunAt            DateTime?
   lastRunStatus        String?
   nextRunAt            DateTime?

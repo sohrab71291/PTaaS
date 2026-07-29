@@ -1,15 +1,22 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import prisma from '../lib/prisma';
 import { generateK6Script } from '../services/k6Generator';
-import { pushScript } from '../services/githubService';
+import { pushScript as pushScriptToGithub } from '../services/githubService';
+import { pushScript as pushScriptToGitlab } from '../services/gitlabService';
 
 const router = Router();
 
-// Fire-and-forget push — never let a GitHub hiccup fail the save request.
-function syncScriptToGithub(specId: string, name: string, script: string | null | undefined) {
+// Fire-and-forget push — never let a GitHub/GitLab hiccup fail the save request.
+// Each push is independently a no-op if its provider isn't configured via env vars,
+// so a suite is synced to whichever remote(s) are set up.
+function syncScriptToRepos(specId: string, name: string, script: string | null | undefined) {
   if (!script) return;
-  pushScript(specId, script, `Update script for "${name}" (${specId})`).catch(err => {
+  const message = `Update script for "${name}" (${specId})`;
+  pushScriptToGithub(specId, script, message).catch(err => {
     console.warn(`[GitHub] Unexpected error pushing script for spec ${specId}: ${err.message}`);
+  });
+  pushScriptToGitlab(specId, script, message).catch(err => {
+    console.warn(`[GitLab] Unexpected error pushing script for spec ${specId}: ${err.message}`);
   });
 }
 
@@ -61,7 +68,7 @@ router.post('/', async (req: Request, res: Response) => {
         ...(uploadedFiles != null ? { uploadedFiles } : {}),
       },
     });
-    syncScriptToGithub(updated.id, updated.name, generatedScript);
+    syncScriptToRepos(updated.id, updated.name, generatedScript);
     return res.json(updated);
   }
 
@@ -85,7 +92,7 @@ router.post('/', async (req: Request, res: Response) => {
       lastRunAt: null,
     },
   });
-  syncScriptToGithub(spec.id, spec.name, generatedScript);
+  syncScriptToRepos(spec.id, spec.name, generatedScript);
   return res.status(201).json(spec);
 });
 
@@ -123,7 +130,7 @@ router.put('/:id', async (req: Request, res: Response) => {
         scheduledAt: req.body.scheduledAt ? new Date(req.body.scheduledAt) : null,
       },
     });
-    syncScriptToGithub(updated.id, updated.name, req.body.generatedScript);
+    syncScriptToRepos(updated.id, updated.name, req.body.generatedScript);
     return res.json(updated);
   } catch {
     return res.status(404).json({ error: 'Not found' });
