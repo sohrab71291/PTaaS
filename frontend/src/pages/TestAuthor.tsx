@@ -19,6 +19,7 @@ import { PreviewDrawer } from '../components/PreviewDrawer';
 import { AIGeneratePanel, StoredFile } from '../components/AIGeneratePanel';
 import { AgentRefinePanel } from '../components/AgentRefinePanel';
 import { HarToScriptPanel } from '../components/HarToScriptPanel';
+import { ManualScriptPanel } from '../components/ManualScriptPanel';
 import { SloEditor } from '../components/SloEditor';
 import {
   TestType, Complexity, TestTypeProfile, TEST_TYPE_PROFILES,
@@ -26,7 +27,7 @@ import {
 } from '../lib/testProfiles';
 import { ScriptSpecSnapshot, buildScriptSpecSnapshot, computeSpecDiff } from '../lib/specDiff';
 
-interface StoredFileWithSource extends StoredFile { source: 'ai' | 'har'; }
+interface StoredFileWithSource extends StoredFile { source: 'ai' | 'har' | 'manual'; }
 
 const DEFAULT_SPEC: Omit<TestSpec, 'id' | 'createdAt' | 'updatedAt' | 'lastRunStatus' | 'lastRunAt'> = {
   name: '',
@@ -98,8 +99,8 @@ export const TestAuthor: React.FC = () => {
   const [showRunModal, setShowRunModal] = useState(false);
   const [runLoading, setRunLoading] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  // Section F tab: AI-generate-from-config vs. convert-from-HAR/JSON
-  const [genTab, setGenTab] = useState<'ai' | 'har'>('ai');
+  // Section F tab: AI-generate-from-config vs. convert-from-HAR/JSON vs. manual upload/paste
+  const [genTab, setGenTab] = useState<'ai' | 'har' | 'manual'>('ai');
   const [previewTab, setPreviewTab] = useState<'json' | 'k6'>('json');
   const [savedId, setSavedId] = useState<string | null>(id || null);
   const { toasts, addToast, removeToast } = useToast();
@@ -198,6 +199,7 @@ export const TestAuthor: React.FC = () => {
   // before "Generate" works again.
   const [aiFile, setAiFile] = useState<StoredFile | null>(null);
   const [harFiles, setHarFiles] = useState<StoredFile[]>([]);
+  const [manualFile, setManualFile] = useState<StoredFile | null>(null);
 
   // Snapshot of the spec fields that affect the script, taken whenever the
   // script is (re)generated or loaded — diffed against current form state to
@@ -489,6 +491,8 @@ export const TestAuthor: React.FC = () => {
           const ai = uf.find((f: StoredFileWithSource) => f.source === 'ai');
           setAiFile(ai ? { name: ai.name, content: ai.content, mimeType: ai.mimeType } : null);
           setHarFiles(uf.filter((f: StoredFileWithSource) => f.source === 'har').map((f: StoredFileWithSource) => ({ name: f.name, content: f.content, mimeType: f.mimeType })));
+          const manual = uf.find((f: StoredFileWithSource) => f.source === 'manual');
+          setManualFile(manual ? { name: manual.name, content: manual.content, mimeType: manual.mimeType } : null);
         }
         skipDirtyCheck.current = true;
         setDirty(false);
@@ -524,6 +528,7 @@ export const TestAuthor: React.FC = () => {
       const uploadedFiles: StoredFileWithSource[] = [
         ...(aiFile ? [{ ...aiFile, source: 'ai' as const }] : []),
         ...harFiles.map(f => ({ ...f, source: 'har' as const })),
+        ...(manualFile ? [{ ...manualFile, source: 'manual' as const }] : []),
       ];
       const payload = {
         ...spec,
@@ -1156,14 +1161,16 @@ export const TestAuthor: React.FC = () => {
 
       {/* F. Script Generation — AI-from-config vs. HAR/JSON import, in separate tabs */}
       <div className="mt-4 bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <div className={`px-6 py-4 ${genTab === 'ai' ? 'bg-gradient-to-r from-purple-600 to-indigo-600' : 'bg-gradient-to-r from-teal-600 to-cyan-600'}`}>
+        <div className={`px-6 py-4 ${genTab === 'ai' ? 'bg-gradient-to-r from-purple-600 to-indigo-600' : genTab === 'har' ? 'bg-gradient-to-r from-teal-600 to-cyan-600' : 'bg-gradient-to-r from-gray-700 to-gray-900'}`}>
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-white font-bold text-base">F. Script Generation</h2>
               <p className="text-white/80 text-xs">
                 {genTab === 'ai'
                   ? 'Upload test cases → Claude analyzes → K6 script generated'
-                  : 'Captured session → Claude analyzes → K6 script generated'}
+                  : genTab === 'har'
+                    ? 'Captured session → Claude analyzes → K6 script generated'
+                    : 'Bring your own k6 script — upload a .js file or paste it directly'}
               </p>
             </div>
             <div className="flex gap-1 bg-black/20 p-1 rounded-lg">
@@ -1185,6 +1192,15 @@ export const TestAuthor: React.FC = () => {
               >
                 <Globe size={14} /> Import HAR/JSON
               </button>
+              <button
+                type="button"
+                onClick={() => setGenTab('manual')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
+                  genTab === 'manual' ? 'bg-white text-gray-800 shadow-sm' : 'text-white/80 hover:text-white'
+                }`}
+              >
+                <Code2 size={14} /> Upload/Paste Script
+              </button>
             </div>
           </div>
         </div>
@@ -1205,7 +1221,7 @@ export const TestAuthor: React.FC = () => {
               initialFile={aiFile}
               onFileChange={setAiFile}
             />
-          ) : (
+          ) : genTab === 'har' ? (
             <HarToScriptPanel
               embedded
               loadProfile={{ profileType, stages, constantVus, constantDuration }}
@@ -1221,6 +1237,15 @@ export const TestAuthor: React.FC = () => {
               credentialBatchId={credentialBatchId}
               initialFiles={harFiles}
               onFilesChange={setHarFiles}
+            />
+          ) : (
+            <ManualScriptPanel
+              embedded
+              disabled={!spec.name.trim()}
+              disabledReason={!spec.name.trim() ? 'Enter a Test Name (section A) before adding a script.' : undefined}
+              onScriptGenerated={handleScriptGenerated}
+              initialFile={manualFile}
+              onFileChange={setManualFile}
             />
           )}
         </div>
