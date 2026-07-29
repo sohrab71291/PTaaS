@@ -343,6 +343,11 @@ MANDATORY RULES:
 3. Keep the script fully self-contained and runnable (imports, InfluxDB integration block, handleSummary, etc. all preserved).
 4. If the instruction is ambiguous, make the most reasonable interpretation for a k6 performance test script rather than asking for clarification.
 ${hasCapturedData ? `5. The script contains the line ${DATA_PLACEHOLDER} in place of the real captured-request data (removed to keep this prompt a reasonable size). Leave that exact placeholder line in your output — do NOT delete it, move it, or attempt to redeclare/transcribe LOGIN_REQUEST/CAPTURED_REQUESTS yourself; the real data is spliced back in automatically afterward.` : ''}
+6. THRESHOLD instructions (e.g. "Threshold for X changed/added/removed") refer to \`options.thresholds\` — this k6 script has EXACTLY ONE \`export const options = { ... }\` declaration (a second one fails to load with "Duplicate export name 'options'"). Locate that EXISTING \`thresholds\` object inside it and edit the matching key's condition array in place — do NOT add a second \`options\`/\`thresholds\` block, and do NOT touch unrelated threshold keys. If the metric key named in the instruction doesn't exist yet, add it as a new key in that SAME object.
+7. CHECK instructions (e.g. "Check added/removed: ...") refer to \`check()\` calls. Scripts in this app commonly define checks in ONE of two shapes — inspect the actual script to see which applies before editing:
+   (a) a single generic per-request check() (e.g. inside a shared \`replayStep()\`/\`doRequest()\` helper used for every captured call) — for a check ADD/REMOVE instruction here, modify that ONE shared check() block, since it already runs for every request; do not duplicate it per endpoint.
+   (b) separate per-endpoint check() calls (one inside each named exec function) — add/remove the assertion in EVERY such check() block consistently, matching the exact key-naming convention already used by the neighboring checks in that same script (e.g. if existing keys are template strings like \`[reqDef.name + ' status is ' + ...]\`, follow that same pattern rather than inventing a different style).
+   In both cases, never rename or restructure unrelated existing checks.
 
 Output ONLY JavaScript, starting with the first import line.`;
 }
