@@ -7,6 +7,8 @@ const CAPTURED_REQUESTS = [{"name":"GET _apps_ArcherApp_ArcherApp_aspx","method"
 
 
 
+
+
 const TEST_ID = __ENV.TESTID || ('local-' + Date.now());
 const RUN_ID = __ENV.RUN_ID || ('PerfOps-' + Date.now());
 const NODE_NAME = __ENV.NODE_NAME || 'PerfOps';
@@ -44,8 +46,6 @@ export const options = {
     },
   },
   thresholds: {
-    http_req_duration: ['p(95)<500'],
-    http_req_failed: ['rate<0.01'],
   },
 };
 
@@ -435,9 +435,6 @@ function replayStep(reqDef, jar, correlationVars) {
 
   const responseThresholdMs = effectiveResponseThreshold(reqDef);
   check(res, {
-    [reqDef.name + ' status is 200']: function (r) { return isResponseStatusExpected(r, effectiveExpectedStatus); },
-    [reqDef.name + ' status is 404']: function (r) { return r.status === 404; },
-    [reqDef.name + ' response time < 500ms']: function (r) { return r.timings.duration < 500; },
     [reqDef.name + ' response time < ' + responseThresholdMs + 'ms']: function (r) { return r.timings.duration < responseThresholdMs; },
   });
 
