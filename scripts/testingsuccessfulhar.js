@@ -1,7 +1,6 @@
 import http from 'k6/http';
-import { check, group, sleep } from 'k6';
+import { check, group, sleep, fail } from 'k6';
 import { Counter, Trend, Gauge } from 'k6/metrics';
-import { fail } from 'k6';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 const LOGIN_REQUEST = null;
 const CAPTURED_REQUESTS = [{"name":"POST _api_internal_Permission_GetModuleRecordAccess","method":"POST","path":"/api/internal/Permission/GetModuleRecordAccess","headers":{"x-http-method-override":"GET","Content-Type":"application/json"},"payload":"{\n  \"Value\": \"?&$filter=Type eq '2' and HasCreate eq true\"\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_internal_Permission_GetModuleRecordAccess","method":"POST","path":"/api/internal/Permission/GetModuleRecordAccess","headers":{"x-http-method-override":"GET","Content-Type":"application/json"},"payload":"{\n  \"Value\": \"?&$filter=Type eq '7' and HasCreate eq true\"\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_LookUp_node_root","method":"GET","path":"/api/V2/internal/LookUp?node=root","headers":{"Content-Type":"application/json","x-requested-with":"XMLHttpRequest"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerResources","method":"POST","path":"/api/V2/internal/ConsumerResources","headers":{"Content-Type":"application/json","x-csrf-token":"N6ztEh1LnwAVUBxOmloD_XhXzPKwkX4D5B_MeHlV1yWpHd77WOPBDtje3bNmNVCz0vGFvrT53D_Vf_8LWJdHxf6OI0fDTPUS6Nlu3dv3_D41","x-archer-source":"Archer,ConsumerResources","x-requested-with":"XMLHttpRequest"},"payload":"{\n  \"value\": [\n    \"PlatformUi\",\n    \"MessageBox\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _plugins_json_id_1785923275013","method":"GET","path":"/plugins.json?id=1785923275013","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_Internal_SessionStates_Save","method":"POST","path":"/api/V2/Internal/SessionStates/Save","headers":{"Content-Type":"application/json","x-csrf-token":"N6ztEh1LnwAVUBxOmloD_XhXzPKwkX4D5B_MeHlV1yWpHd77WOPBDtje3bNmNVCz0vGFvrT53D_Vf_8LWJdHxf6OI0fDTPUS6Nlu3dv3_D41","x-archer-source":"Archer,SessionState","x-requested-with":"XMLHttpRequest"},"payload":"{\n  \"StateId\": null,\n  \"Url\": \"grcr/eydwYWNrYWdlTmFtZSc6J1JlYWN0TG9hZGVyJywneHR5cGUnOidsb2FkZXInLCdyb3V0ZSc6Jy91c2VyLXByb2ZpbGUnLCd0YXNrTnVtJzonMTQ3QUEnfQ==\"\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfile_7648__id_7648","method":"GET","path":"/api/V2/internal/UserProfile(7648)?id=7648","headers":{"Content-Type":"application/json"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"Content-Type":"application/json","x-csrf-token":"N6ztEh1LnwAVUBxOmloD_XhXzPKwkX4D5B_MeHlV1yWpHd77WOPBDtje3bNmNVCz0vGFvrT53D_Vf_8LWJdHxf6OI0fDTPUS6Nlu3dv3_D41","x-archer-source":"Archer,Navigation"},"payload":"{\n  \"value\": [\n    \"Global\",\n    \"MainMenu\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_AppearanceThemes_GetActive","method":"GET","path":"/api/V2/internal/AppearanceThemes/GetActive","headers":{"Content-Type":"application/json","x-csrf-token":"N6ztEh1LnwAVUBxOmloD_XhXzPKwkX4D5B_MeHlV1yWpHd77WOPBDtje3bNmNVCz0vGFvrT53D_Vf_8LWJdHxf6OI0fDTPUS6Nlu3dv3_D41","x-archer-source":"Archer,Navigation"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfileImage","method":"GET","path":"/api/V2/internal/UserProfileImage","headers":{"Content-Type":"application/json","x-csrf-token":"N6ztEh1LnwAVUBxOmloD_XhXzPKwkX4D5B_MeHlV1yWpHd77WOPBDtje3bNmNVCz0vGFvrT53D_Vf_8LWJdHxf6OI0fDTPUS6Nlu3dv3_D41","x-archer-source":"Archer,Navigation"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"Content-Type":"application/json","x-csrf-token":"N6ztEh1LnwAVUBxOmloD_XhXzPKwkX4D5B_MeHlV1yWpHd77WOPBDtje3bNmNVCz0vGFvrT53D_Vf_8LWJdHxf6OI0fDTPUS6Nlu3dv3_D41","x-archer-source":"Archer,Translations"},"payload":"{\n  \"value\": [\n    \"Global\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_ConsumerGroups","method":"POST","path":"/api/V2/internal/ConsumerGroups","headers":{"Content-Type":"application/json","x-csrf-token":"N6ztEh1LnwAVUBxOmloD_XhXzPKwkX4D5B_MeHlV1yWpHd77WOPBDtje3bNmNVCz0vGFvrT53D_Vf_8LWJdHxf6OI0fDTPUS6Nlu3dv3_D41","x-archer-source":"Archer,Translations"},"payload":"{\n  \"value\": [\n    \"Global\",\n    \"MessageBox\",\n    \"UserProfile\",\n    \"Emails\",\n    \"Phones\",\n    \"ReactGrid\",\n    \"PlatformUi\",\n    \"ManageGroups\",\n    \"ImageSelector\",\n    \"ArcherUploadModal\"\n  ]\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"POST _api_V2_internal_TaskPermissions_CheckTaskAccess","method":"POST","path":"/api/V2/internal/TaskPermissions/CheckTaskAccess","headers":{"Content-Type":"application/json","x-csrf-token":"N6ztEh1LnwAVUBxOmloD_XhXzPKwkX4D5B_MeHlV1yWpHd77WOPBDtje3bNmNVCz0vGFvrT53D_Vf_8LWJdHxf6OI0fDTPUS6Nlu3dv3_D41","x-archer-source":"Archer,TaskObject"},"payload":"{\n  \"TaskAccessRequest\": {\n    \"PageHitTaskNum\": \"147AA\",\n    \"TaskNumbers\": [\n      \"147AA\",\n      \"148\"\n    ]\n  }\n}","payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_UserProfile_7648__id_7648","method":"GET","path":"/api/V2/internal/UserProfile(7648)?id=7648","headers":{"Content-Type":"application/json","x-csrf-token":"N6ztEh1LnwAVUBxOmloD_XhXzPKwkX4D5B_MeHlV1yWpHd77WOPBDtje3bNmNVCz0vGFvrT53D_Vf_8LWJdHxf6OI0fDTPUS6Nlu3dv3_D41","x-archer-source":"Archer,User-profile"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500},{"name":"GET _api_V2_internal_SecurityParameters_1___count_true_reque","method":"GET","path":"/api/V2/internal/SecurityParameters(1)?$count=true&request=1","headers":{"Content-Type":"application/json","x-csrf-token":"N6ztEh1LnwAVUBxOmloD_XhXzPKwkX4D5B_MeHlV1yWpHd77WOPBDtje3bNmNVCz0vGFvrT53D_Vf_8LWJdHxf6OI0fDTPUS6Nlu3dv3_D41","x-archer-source":"Archer,User-profile"},"payload":null,"payloadType":"json","expectedStatus":200,"responseThresholdMs":500}];
@@ -9,7 +8,7 @@ const CAPTURED_REQUESTS = [{"name":"POST _api_internal_Permission_GetModuleRecor
 const TEST_ID = __ENV.TESTID || ('local-' + Date.now());
 const RUN_ID = __ENV.RUN_ID || ('PerfOps-' + Date.now());
 const NODE_NAME = __ENV.NODE_NAME || 'PerfOps';
-const TEST_NAME = __ENV.TEST_NAME || 'Archer Classic Session Replay';
+const TEST_NAME = __ENV.TEST_NAME || 'Archer Classic Captured Session Replay';
 const BASE_URL = __ENV.BASE_URL || 'https://9185004.classic-dev.internal.archerirm.net';
 const INFLUX_V2_URL = __ENV.INFLUX_V2_URL || 'http://localhost:8086';
 const INFLUX_V2_ORG = __ENV.INFLUX_V2_ORG || '';
@@ -19,7 +18,7 @@ const INFLUX_V2_TOKEN = __ENV.INFLUX_V2_TOKEN || '';
 const INFLUX_V2_AUTO_CREATE_BUCKET = (__ENV.INFLUX_V2_AUTO_CREATE_BUCKET || 'false').toLowerCase() === 'true';
 const INFLUX_V2_ENABLED = !!(INFLUX_V2_ORG && INFLUX_V2_BUCKET && INFLUX_V2_TOKEN);
 
-const SCENARIO_NAME = 'session_replay';
+const SCENARIO_NAME = 'sessionReplay';
 
 const CREDENTIALS = [{"loginUrl":"https://9185004.classic-dev.internal.archerirm.net/api/core/security/login","username":"Nitesh","password":"Password123$","instanceName":"9185004"}];
 // Each entry has the shape: { loginUrl, username, password, instanceName } —
@@ -39,16 +38,20 @@ const k6DataReceivedBytesTotal = new Counter('k6_data_received_bytes_total');
 
 export const options = {
   scenarios: {
-    session_replay: {
-      executor: 'constant-vus',
-      vus: 1,
-      duration: '1m',
+    sessionReplay: {
+      executor: 'ramping-vus',
       exec: 'sessionReplay',
+      startVUs: 0,
+      stages: [
+        { target: 10, duration: '2m' },
+        { target: 50, duration: '5m' },
+        { target: 0, duration: '1m' },
+      ],
     },
   },
   thresholds: {
-    'http_req_duration{endpoint_type:app}': ['p(95)<1500'],
     'http_req_failed{endpoint_type:app}': ['rate<1.01'],
+    'http_req_duration{endpoint_type:app}': ['p(95)<1500'],
   },
 };
 
@@ -408,25 +411,15 @@ function replayStep(reqDef, jar, correlationVars) {
   const responseThresholdMs = effectiveResponseThreshold(reqDef);
   const statusCheckPassed = isResponseStatusExpected(res, reqDef.expectedStatus);
   const responseTimeCheckPassed = res.timings.duration < responseThresholdMs;
-  const validationStatus200 = res.status === 200;
-  const validationRt1500 = res.timings.duration < 1500;
   check(res, {
     [reqDef.name + ' status is ' + reqDef.expectedStatus]: function () { return statusCheckPassed; },
     [reqDef.name + ' response time < ' + responseThresholdMs + 'ms']: function () { return responseTimeCheckPassed; },
-    [reqDef.name + ' status is 200']: function () { return validationStatus200; },
-    [reqDef.name + ' response time < 1500ms']: function () { return validationRt1500; },
   });
   if (!statusCheckPassed) {
     console.warn(reqDef.name + ' validation warning: expected status ' + reqDef.expectedStatus + ' but got ' + res.status);
   }
   if (!responseTimeCheckPassed) {
     console.warn(reqDef.name + ' validation warning: response time ' + res.timings.duration + 'ms exceeded ' + responseThresholdMs + 'ms');
-  }
-  if (!validationStatus200) {
-    console.warn(reqDef.name + ' validation warning: status is 200 expected but got ' + res.status);
-  }
-  if (!validationRt1500) {
-    console.warn(reqDef.name + ' validation warning: response time ' + res.timings.duration + 'ms exceeded 1500ms');
   }
 
   recordCustomMetrics(res, SCENARIO_NAME, reqDef.name, path, getByteLength(payload || ''), reqDef.name, reqDef.expectedStatus);
@@ -450,6 +443,8 @@ export function sessionReplay(setupData) {
     'k6_vus,testid=' + escapeTagValue(TEST_ID) + ',scenario=' + escapeTagValue(SCENARIO_NAME) + ',vu=' + escapeTagValue(__VU) + ' value=1 ' + _ts,
     'virtualUsers,' + buildInfluxTagSet({ runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, scenario: SCENARIO_NAME }) + ' meanActiveThreads=1,finishedThreads=' + __ITER + ' ' + _ts,
   ]);
+
+  ensureAuth();
 
   const replayRequests = CAPTURED_REQUESTS;
 
