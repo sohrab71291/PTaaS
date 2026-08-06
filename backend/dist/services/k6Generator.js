@@ -6,16 +6,27 @@ function generateK6Script(spec, baseUrl = 'https://api.example.com') {
     const { name, request, loadProfile, thresholds, checks, tags } = spec;
     const scenarioName = toScenarioName(name);
     // ── options block ──────────────────────────────────────────────────────────
-    const stagesJson = loadProfile.stages
+    const stagesJson = (loadProfile.stages ?? [])
         .map(s => `    { duration: '${s.duration}', target: ${s.target} }`)
         .join(',\n');
+    // http_req_duration/http_req_failed are k6 system metrics that, unscoped,
+    // aggregate EVERY http call the script makes — including the InfluxDB
+    // write/precheck traffic from the InfluxDB boilerplate (k6InfluxTemplate.ts).
+    // Scoping to {endpoint_type:app} restricts them to the actual request under
+    // test (tagged below), which never includes the InfluxDB calls (those are
+    // deliberately left untagged for endpoint_type). 'checks' doesn't need this —
+    // check() is only ever called against the app response, never against
+    // InfluxDB's own responses, so it's already unpolluted.
+    const SYSTEM_METRICS_NEEDING_APP_SCOPE = new Set(['http_req_duration', 'http_req_failed']);
     const thresholdEntries = Object.entries(thresholds)
         .map(([metric, conditions]) => {
         const condArr = conditions.map(c => `'${c.condition}'`).join(', ');
-        return `    '${metric}': [${condArr}]`;
+        const key = SYSTEM_METRICS_NEEDING_APP_SCOPE.has(metric) ? `${metric}{endpoint_type:app}` : metric;
+        return `    '${key}': [${condArr}]`;
     })
         .join(',\n');
     const tagsStr = tags.map(t => `'${t}'`).join(', ');
+    const firstStage = (loadProfile.stages ?? [])[0];
     let optionsBlock = '';
     if (loadProfile.type === 'arrival-rate') {
         optionsBlock = `export const options = {
@@ -24,7 +35,7 @@ function generateK6Script(spec, baseUrl = 'https://api.example.com') {
       executor: 'ramping-arrival-rate',
       startRate: 10,
       timeUnit: '1s',
-      preAllocatedVUs: ${loadProfile.stages[0]?.target ?? 50},
+      preAllocatedVUs: ${firstStage?.target ?? 50},
       stages: [
 ${stagesJson}
       ],
@@ -43,8 +54,8 @@ ${thresholdEntries}
   scenarios: {
     ${scenarioName}: {
       executor: 'constant-vus',
-      vus: ${loadProfile.stages[0]?.target ?? 10},
-      duration: '${loadProfile.stages[0]?.duration ?? '5m'}',
+      vus: ${firstStage?.target ?? 10},
+      duration: '${firstStage?.duration ?? '5m'}',
       gracefulStop: '5s',
       tags: { scenario: '${scenarioName}' },
     },
@@ -98,7 +109,7 @@ ${thresholdEntries}
     if (request.method === 'GET' || request.method === 'DELETE') {
         httpCall = `  const res = http.${request.method.toLowerCase()}(BASE_URL + '${urlPath}', {
     headers: commonHeaders,
-    tags: { scenario: SCENARIO_NAME, api: '${apiTag}', name: '${request.method} ${urlPath}' },
+    tags: { scenario: SCENARIO_NAME, api: '${apiTag}', name: '${request.method} ${urlPath}', endpoint_type: 'app' },
   });`;
     }
     else {
@@ -108,11 +119,11 @@ ${thresholdEntries}
         httpCall = `  const payload = ${payloadVal};
   const res = http.${request.method.toLowerCase()}(BASE_URL + '${urlPath}', payload, {
     headers: commonHeaders,
-    tags: { scenario: SCENARIO_NAME, api: '${apiTag}', name: '${request.method} ${urlPath}' },
+    tags: { scenario: SCENARIO_NAME, api: '${apiTag}', name: '${request.method} ${urlPath}', endpoint_type: 'app' },
   });`;
         sentBytesExpr = 'getByteLength(payload)';
     }
-    // ── checks ────────────────────────────────────────────────────────────────
+    // ── checks (VALIDATIONS ONLY — never gate pass/fail, see below) ────────────
     const checkLines = checks.map(c => {
         if (c.includes('status is 200'))
             return "    'status is 200': (r) => r.status === 200";
@@ -127,7 +138,7 @@ ${thresholdEntries}
     }).join(',\n');
     const recordCall = (0, k6InfluxTemplate_1.influxRecordCall)('res', 'SCENARIO_NAME', apiTag, urlPath, sentBytesExpr, stepName);
     // Peak VUs written once in setup() – avoids the unreliable __VU===1 per-iteration guard.
-    const maxVus = Math.max(...loadProfile.stages.map(s => s.target ?? 0), 1);
+    const maxVus = Math.max(...(loadProfile.stages ?? []).map(s => s.target ?? 0), firstStage?.target ?? 1);
     return `${(0, k6InfluxTemplate_1.influxImports)()}
 
 const SCENARIO_NAME = '${scenarioName}';
@@ -147,8 +158,17 @@ ${(0, k6InfluxTemplate_1.influxIterationTracking)('SCENARIO_NAME')}
   group('${stepName}', () => {
 ${httpCall}
 
-    check(res, {
+    // Checks are validations only — a failing one is logged as a WARNING,
+    // never an error, and never affects pass/fail on its own. Thresholds
+    // (options.thresholds above) are the SLA/SLO gate for the run; every
+    // 4xx/5xx status below is unconditionally a real failure regardless of
+    // whether these checks pass.
+    const checkDefs = {
 ${checkLines}
+    };
+    check(res, checkDefs);
+    Object.entries(checkDefs).forEach(function (entry) {
+      if (!entry[1](res)) console.warn('${stepName} validation warning: ' + entry[0] + ' (got status ' + res.status + ')');
     });
 
     ${recordCall}
@@ -157,6 +177,13 @@ ${checkLines}
       console.error('Request failed: ' + res.status + ' ' + res.body);
     }
   });
+
+  // Force-flush this iteration's buffered InfluxDB lines now — teardown()
+  // runs in its own fresh VU context in k6, so it can only flush an empty
+  // buffer of its own, never the one this VU actually accumulated. Without
+  // this, up to INFLUX_FLUSH_THRESHOLD-1 trailing requestsRaw points get
+  // silently dropped whenever a VU's iteration ends mid-batch.
+  flushInfluxLines();
 
   sleep(${loadProfile.thinkTime || 1});
 }

@@ -36,6 +36,19 @@ interface InfluxConfig {
   nodeName: string; // agent/test name tag
 }
 
+// True if a k6 metric point's tags identify it as InfluxDB bookkeeping traffic
+// (a metrics write, or an org/bucket precheck lookup) rather than a real
+// request the script under test was measuring. These must never count toward
+// the executor's request totals, error rate, or pass/fail signal.
+function isInfluxRequest(tags: Record<string, string> | undefined): boolean {
+  if (!tags) return false;
+  if (tags.api === 'influx-v2-write' || tags.step === 'metrics-publish' || tags.step === 'metrics-precheck') {
+    return true;
+  }
+  const url = String(tags.url ?? tags.name ?? '');
+  return /\/api\/v2\/(write|orgs|buckets)(\?|$)/.test(url);
+}
+
 export class K6Runner {
   private process: ChildProcess | null = null;
   private metricsInterval: NodeJS.Timeout | null = null;
@@ -243,16 +256,34 @@ export class K6Runner {
           if (point.type !== 'Point') continue;
 
           // Skip internal InfluxDB traffic: write requests and bucket/org management
-          // calls from ensureInfluxBucket() (tagged step: 'metrics-precheck').
-          if (
-            point.data?.tags?.api === 'influx-v2-write' ||
-            point.data?.tags?.step === 'metrics-publish' ||
-            point.data?.tags?.step === 'metrics-precheck'
-          ) continue;
+          // calls from ensureInfluxBucket() (tagged step: 'metrics-precheck'), so
+          // they never count toward the executor's live/final request totals,
+          // error rate, or duration percentiles. Scripts that follow the standard
+          // InfluxDB boilerplate (k6InfluxTemplate.ts/k6PromptBlocks.ts) tag these
+          // calls explicitly; as a fallback for hand-written/older scripts that
+          // write to InfluxDB without those exact tags, also match on the request
+          // URL itself — InfluxDB's write/org/bucket-management endpoints are a
+          // fixed, well-known API surface (/api/v2/write, /api/v2/orgs,
+          // /api/v2/buckets) regardless of tagging.
+          if (isInfluxRequest(point.data?.tags)) continue;
 
           if (point.metric === 'http_req_duration' && typeof point.data?.value === 'number') {
-            const failed = point.data?.tags?.expected_response === 'false' ||
-                           (parseInt(point.data?.tags?.status ?? '200', 10) >= 400);
+            // expected_response is k6's OWN verdict, driven by the script's
+            // responseCallback/http.expectedStatuses() — it already accounts
+            // for tolerated statuses (e.g. a benign 404 on a known endpoint,
+            // an idempotent DELETE landing on 404/409). Previously this was
+            // OR'd with a raw status>=400 check, which meant ANY non-2xx
+            // status still got counted as failed regardless of what
+            // expected_response said — silently overriding the very
+            // tolerance the script's responseCallback was set up to express,
+            // and diverging from k6's own http_req_failed/checks metrics.
+            // Trust expected_response when k6 provides it; only fall back to
+            // the raw status code for points that lack the tag entirely
+            // (e.g. a hand-written script with no responseCallback set).
+            const expectedResponseTag = point.data?.tags?.expected_response;
+            const failed = expectedResponseTag !== undefined
+              ? expectedResponseTag === 'false'
+              : parseInt(point.data?.tags?.status ?? '200', 10) >= 400;
             newDurations.push({
               ms: point.data.value,    // K6 stores http_req_duration in milliseconds
               name: point.data?.tags?.name ?? point.data?.tags?.url ?? 'request',
@@ -942,18 +973,29 @@ export class K6Runner {
   private buildSummary() {
     const sorted = [...this.durationWindow].sort((a, b) => a - b);
     const n = sorted.length;
-    if (n === 0) return null;
-
-    const pct = (q: number) => sorted[Math.min(Math.floor(n * q), n - 1)];
-    const errorRate = this.totalRequestsCount > 0
-      ? (this.failedRequestsCount / this.totalRequestsCount) * 100
-      : 0;
 
     // Enrich check results with passRate percentage for report display
     const checkResults = (this.capturedSummary?.checkResults ?? []).map((c: any) => {
       const total = (c.passes ?? 0) + (c.fails ?? 0);
       return { ...c, passRate: total > 0 ? (c.passes / total) * 100 : 100 };
     });
+    const thresholdResults = this.capturedSummary?.thresholdResults ?? [];
+
+    // No duration samples (e.g. the run failed before any request completed) —
+    // still surface whatever threshold/check results k6's handleSummary captured,
+    // rather than dropping the whole summary and leaving the report with no
+    // explanation beyond a bare exit code.
+    if (n === 0) {
+      return this.capturedSummary
+        ? { metrics: {}, p50: null, p90: null, p95: null, p99: null, errorRate: null,
+            totalRequests: this.totalRequestsCount, thresholdResults, checkResults }
+        : null;
+    }
+
+    const pct = (q: number) => sorted[Math.min(Math.floor(n * q), n - 1)];
+    const errorRate = this.totalRequestsCount > 0
+      ? (this.failedRequestsCount / this.totalRequestsCount) * 100
+      : 0;
 
     return {
       metrics: {
@@ -976,7 +1018,7 @@ export class K6Runner {
       p99:       Math.round(pct(0.99) * 10) / 10,
       errorRate,
       totalRequests: this.totalRequestsCount,
-      thresholdResults: this.capturedSummary?.thresholdResults ?? [],
+      thresholdResults,
       checkResults,
     };
   }

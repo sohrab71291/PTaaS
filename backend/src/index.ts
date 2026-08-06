@@ -13,7 +13,7 @@ import { evaluateSlos, SloDefinition } from './lib/slo';
 import authRouter from './routes/auth';
 import agentsRouter from './routes/agents';
 import dashboardRouter from './routes/dashboard';
-import testSpecsRouter from './routes/testSpecs';
+import testSpecsRouter, { syncScriptToRepos } from './routes/testSpecs';
 import executionsRouter from './routes/executions';
 import environmentsRouter from './routes/environments';
 import secretsRouter from './routes/secrets';
@@ -46,10 +46,11 @@ app.use(cors());
 // base64 inside uploadedFiles (so re-opening a saved suite doesn't require
 // re-uploading) — the HAR upload endpoints themselves (upload.ts/harGenerate.ts)
 // already accept files up to 200MB via multer, and base64 inflates that by
-// ~1.37x, so this limit must be raised to match rather than sit far below it
-// (a 5mb cap here made every HAR over ~3.6MB raw fail to SAVE even though it
-// generated successfully).
-app.use(express.json({ limit: '250mb' }));
+// ~1.37x (≈274MB for a single max-size file), plus multiple captured files can
+// stack in one suite's uploadedFiles array — 250mb left no headroom and a
+// single largest-allowed HAR would already fail to SAVE even though it
+// generated successfully, so this must sit well above the multer ceiling.
+app.use(express.json({ limit: '500mb' }));
 app.use(requestLogger);
 
 // Public routes (no JWT required)
@@ -358,6 +359,33 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
         const checksPassed      = (checkResults as any[]).filter((c: any) =>  c.passed).length;
         const checksFailed      = (checkResults as any[]).filter((c: any) => !c.passed).length;
 
+        // Build a human-readable reason for the pass/fail status so a "fail"
+        // report doesn't just differ from a "pass" report by its badge — the
+        // specific threshold(s)/SLO(s) that flipped it must be visible too.
+        let failureReason: string | undefined;
+        if (status === 'fail') {
+          const reasons: string[] = [];
+          if (!apiCallsOk) {
+            const breachedThresholds = (thresholdResults as any[]).filter((t: any) => !t.passed);
+            if (breachedThresholds.length > 0) {
+              reasons.push(...breachedThresholds.map((t: any) => `Threshold breached: ${t.metric} ${t.condition} (actual: ${t.actual ?? '?'})`));
+            } else if (exitCode === 99) {
+              // k6's own exit code for "one or more thresholds crossed" — the
+              // breakdown of which threshold didn't make it into thresholdResults
+              // (e.g. handleSummary never ran/emitted), so name the exit code precisely
+              // instead of a generic "non-zero code" message.
+              reasons.push('One or more k6 thresholds were crossed (exit code 99), but the detailed breakdown was not captured for this run — check the console output for the failing metric.');
+            } else {
+              reasons.push(`k6 exited with non-zero code (${exitCode})`);
+            }
+          }
+          if (!sloSlaOk) {
+            const breachedSlos = sloResults.results.filter(r => !r.passed);
+            reasons.push(...breachedSlos.map(r => `SLO breached: ${r.label} (actual: ${r.actual ?? '?'}${r.unit}, target: ${r.operator === 'lte' ? '≤' : '≥'} ${r.target}${r.unit})`));
+          }
+          failureReason = reasons.join('; ') || 'Execution failed';
+        }
+
         await prisma.execution.update({
           where: { id: executionId },
           data: {
@@ -371,6 +399,7 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
             checksPassed,
             checksFailed,
             checkResults:      checkResults as any,
+            errorMessage:      failureReason ?? null,
           },
         }).catch(() => {});
 
@@ -477,6 +506,18 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
           sendLog(`[PerfOps] ⚠ Auto-fix could not be applied (${fixResult.reason}) — reporting final result.`);
           clearAutoFixRun(executionId);
         } else if (autoFixRun) {
+          // The run healed (or exhausted its attempts) — if it healed and this
+          // execution belongs to a saved TestSpec, persist the script Claude
+          // ended up with so the suite reflects what actually passed, and push
+          // it to GitHub/GitLab the same way a manual save does.
+          if (status === 'pass' && execution?.specId) {
+            await prisma.testSpec.update({
+              where: { id: execution.specId },
+              data: { generatedScript: autoFixRun.script },
+            }).catch(() => {});
+            syncScriptToRepos(execution.specId, execution.specName ?? execution.specId, autoFixRun.script);
+            sendLog(`[PerfOps] ✓ Auto-fixed script saved to test suite and pushed to remote repo(s)`);
+          }
           clearAutoFixRun(executionId);
         }
 
@@ -602,7 +643,7 @@ agentWss.on('connection', async (ws: WebSocket, req) => {
         scheduleExecutionBufferCleanup(executionId);
         await prisma.execution.update({
           where: { id: executionId },
-          data: { status: 'fail', finishedAt: new Date() },
+          data: { status: 'fail', finishedAt: new Date(), errorMessage: message },
         }).catch(() => {});
         coralogix.error('k6_execution', { event: 'execution_error', executionId, agentId, message });
         agentRegistry.setStatus(agentId, 'online');

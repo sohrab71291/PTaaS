@@ -82,21 +82,12 @@ interface Finding {
 }
 
 function generateFindings(
-  metrics: any,
-  grafanaMetrics: any,
   thresholdResults: any[],
   checkResults: any[],
+  passed: boolean,
+  errorMessage?: string | null,
 ): Finding[] {
   const findings: Finding[] = [];
-  // Prefer this execution's own recorded error rate (same value the Executor
-  // page showed, and same source used for dispErrPct above) over recomputing
-  // from grafanaMetrics/requestsRaw — that recomputation uses different
-  // pass/fail semantics (isResponseStatusExpected()'s allowances for known-
-  // benign 404s/redirects) and can show 0% here even when k6 itself recorded
-  // real failures, which silently suppressed the error-rate finding below.
-  const errorRatePct = metrics?.errorRate ?? (grafanaMetrics ? grafanaMetrics.errorRate * 100 : null);
-  const p95 = grafanaMetrics?.p95 ?? metrics?.p95 ?? null;
-
   const failedThresholds = thresholdResults.filter(t => !t.passed);
   if (failedThresholds.length > 0) {
     findings.push({
@@ -106,40 +97,26 @@ function generateFindings(
     });
   }
 
-  if (p95 != null && p95 > 1000) {
-    findings.push({
-      severity: 'critical',
-      message: `P95 response time (${p95}ms) exceeds 1000ms — users experience unacceptable latency at the 95th percentile.`,
-      recommendation: 'Profile slow endpoints. Examine database query plans, caching strategies, and upstream service dependencies.',
-    });
-  } else if (p95 != null && p95 > 500) {
-    findings.push({
-      severity: 'warning',
-      message: `P95 response time (${p95}ms) is above the 500ms general guideline.`,
-      recommendation: 'Review the slowest API calls captured during the test. Consider enabling response caching or adding a CDN layer.',
-    });
-  }
-
-  if (errorRatePct != null && errorRatePct > 5) {
-    findings.push({
-      severity: 'critical',
-      message: `Error rate (${errorRatePct.toFixed(2)}%) exceeds 5% — a significant proportion of requests are failing.`,
-      recommendation: 'Examine server error logs during the test window. Check for connection pool exhaustion, rate limiting, or backend exceptions.',
-    });
-  } else if (errorRatePct != null && errorRatePct > 1) {
-    findings.push({
-      severity: 'warning',
-      message: `Error rate (${errorRatePct.toFixed(2)}%) is above the 1% acceptable threshold.`,
-      recommendation: 'Review error categories in the k6 output. Ensure the target environment is stable and not under unrelated load.',
-    });
-  }
-
   const failedChecks = checkResults.filter(c => !c.passed);
   if (failedChecks.length > 0) {
     findings.push({
       severity: 'warning',
       message: `${failedChecks.length} functional check${failedChecks.length > 1 ? 's' : ''} failed: ${failedChecks.map(c => c.name).join(', ')}`,
       recommendation: 'Failing checks indicate functional regressions. These should be treated as defects and resolved before the next performance run.',
+    });
+  }
+
+  if (findings.length === 0 && !passed) {
+    // The run failed but no per-threshold/per-check breakdown was captured for
+    // this execution (e.g. handleSummary output wasn't parsed) — say so plainly
+    // instead of reporting "all passed", which would directly contradict the
+    // FAIL verdict shown at the top of this report.
+    findings.push({
+      severity: 'critical',
+      message: errorMessage
+        ? `Execution failed: ${errorMessage}`
+        : 'Execution failed, but no threshold or check breakdown was captured for this run.',
+      recommendation: 'Re-run the test and inspect the raw console output for this execution to identify which threshold or check caused the failure — the detailed breakdown was not available for this report.',
     });
   }
 
@@ -246,10 +223,10 @@ export const ReportView: React.FC = () => {
 
   const passed   = execution.status === 'pass';
   const findings = generateFindings(
-    metrics,
-    gm,
     Array.isArray(thresholdResults) ? thresholdResults : [],
     Array.isArray(checkResults)     ? checkResults     : [],
+    passed,
+    execution.errorMessage,
   );
 
   const msLimits = extractMsThresholds(Array.isArray(thresholdResults) ? thresholdResults : []);
@@ -355,6 +332,16 @@ export const ReportView: React.FC = () => {
               <div className="text-xs text-gray-500 mt-0.5">Overall Verdict</div>
             </div>
           </div>
+
+          {!passed && execution.errorMessage && (
+            <div className="mt-4 flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+              <XCircle size={15} className="text-red-500 mt-0.5 shrink-0" />
+              <div className="text-sm text-red-800">
+                <span className="font-semibold">Reason for failure: </span>
+                {execution.errorMessage}
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-3 gap-6 mt-6 text-sm">
             {[

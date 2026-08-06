@@ -1,116 +1,63 @@
-import { Router, Request, Response } from 'express';
-import Anthropic from '@anthropic-ai/sdk';
-import multer from 'multer';
-import { parseHar } from '../services/harParser';
-import {
-  ParsedTestCase, isAuthEntry, isAuthHeader, toUrlPath,
-} from '../services/k6FromTestCases';
-import {
-  buildInfluxBlock, buildCsvCredentialAuthPatternBlock, HANDLE_SUMMARY_BLOCK,
-  DATA_PLACEHOLDER, injectCapturedData, injectCredentials,
-} from '../services/k6PromptBlocks';
-import { fetchScriptCredentials } from '../services/credentialStore';
-import { isBraceBalanced } from '../services/k6ScriptValidator';
-import {
-  getAnthropicClient, hasAnthropicCredentials, isOverloadedError,
-  CLAUDE_MODEL, MAX_STREAM_ATTEMPTS, STREAM_BACKOFF_MS, stripCodeFences,
-} from '../services/anthropicClient';
-
-const router = Router();
-
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const multer_1 = __importDefault(require("multer"));
+const harParser_1 = require("../services/harParser");
+const k6FromTestCases_1 = require("../services/k6FromTestCases");
+const k6PromptBlocks_1 = require("../services/k6PromptBlocks");
+const credentialStore_1 = require("../services/credentialStore");
+const k6ScriptValidator_1 = require("../services/k6ScriptValidator");
+const anthropicClient_1 = require("../services/anthropicClient");
+const router = (0, express_1.Router)();
 // Capped at 150MB, not the 200MB this endpoint used to allow — the raw file is
 // later persisted as a base64 string inside TestSpec.uploadedFiles (a jsonb
 // column), and Postgres hard-caps any single jsonb string at ~256MB. Base64
 // inflates by ~4/3, so 200MB raw (~274MB encoded) already exceeded that cap —
 // the suite would generate fine but then fail to ever SAVE. 150MB raw
 // (~200MB encoded) leaves real margin.
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 150 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
-    const ext = '.' + file.originalname.split('.').pop()?.toLowerCase();
-    if (['.har', '.json'].includes(ext)) cb(null, true);
-    else cb(new Error(`Unsupported file type: ${ext}. Allowed: .har, .json`));
-  },
+const upload = (0, multer_1.default)({
+    storage: multer_1.default.memoryStorage(),
+    limits: { fileSize: 150 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const ext = '.' + file.originalname.split('.').pop()?.toLowerCase();
+        if (['.har', '.json'].includes(ext))
+            cb(null, true);
+        else
+            cb(new Error(`Unsupported file type: ${ext}. Allowed: .har, .json`));
+    },
 });
-
 // Hard cap on the number of captured calls fed into the script — protects
 // memory/prompt size on huge HAR captures. testCases beyond this are dropped
 // with a warning rather than silently truncated without explanation. Since the
 // captured data is injected as a literal (not hand-transcribed by Claude), this
 // cap is generous — it's not fighting a token limit, just a sanity ceiling.
 const MAX_CAPTURED_CALLS = 5000;
-
-interface LoadProfileConfig {
-  profileType: 'staged' | 'constant';
-  stages?: { target: number; duration: string }[];
-  constantVus?: number;
-  constantDuration?: string;
+function describeValidationConfig(cfg) {
+    if (!cfg)
+        return '';
+    const lines = [];
+    const checks = (cfg.checks ?? []).filter(c => c && c.trim());
+    if (checks.length) {
+        lines.push(`\nMANDATORY CHECKS (VALIDATIONS ONLY — see rule 8(c)) — the user configured these exact checks in the Validation and Threshold section; every replayed request's check() block must assert them (in addition to the status/response-time checks already required by the REPLAY HARNESS PATTERN). These are informational validations, NOT pass/fail gates — a failing one must log a console.warn() WARNING, never fail the run or count as an error: ${checks.join(' | ')}\n`);
+    }
+    const thresholdEntries = Object.entries(cfg.thresholds ?? {});
+    if (thresholdEntries.length) {
+        const rendered = thresholdEntries.map(([metric, conds]) => `${metric}: ${conds.map(c => c.condition).join(', ')}`).join(' | ');
+        lines.push(`\nMANDATORY THRESHOLDS (SLA/SLO — see rule 8(b)) — the user configured these exact conditions in the Validation and Threshold section; use them verbatim in options.thresholds INSTEAD of the defaults in rule 8: ${rendered}. These ARE the pass/fail gate for the run — breaching any of them fails the test. If the metric is http_req_duration or http_req_failed, still apply the {endpoint_type:app} tag scope from rule 8 to the KEY (e.g. user condition "rate<0.01" on metric "http_req_failed" becomes 'http_req_failed{endpoint_type:app}': ['rate<0.01']) — the condition itself is exactly what the user typed, only the key gets the mandatory scope so InfluxDB traffic still can't affect it. Do not add a 'checks' threshold — checks are validations only (rule 8(c)) and must never gate pass/fail.\n`);
+    }
+    return lines.join('');
 }
-
-// Mirrors AIGeneratePanel's SpecContext.checks/thresholds (backend/src/routes/aiGenerate.ts) —
-// the "Validation and Threshold" section of the Test Authoring form. The HAR
-// generation path previously never received these at all, so every HAR-derived
-// script silently fell back to the hardcoded defaults in rule 8 below
-// regardless of what the user configured.
-interface ValidationConfig {
-  checks?: string[];
-  thresholds?: Record<string, { condition: string; abortOnFail?: boolean }[]>;
+function stripAuthHeaders(headers) {
+    const out = {};
+    for (const [k, v] of Object.entries(headers)) {
+        if (!(0, k6FromTestCases_1.isAuthHeader)(k))
+            out[k] = v;
+    }
+    return out;
 }
-
-function describeValidationConfig(cfg: ValidationConfig | null): string {
-  if (!cfg) return '';
-  const lines: string[] = [];
-
-  const checks = (cfg.checks ?? []).filter(c => c && c.trim());
-  if (checks.length) {
-    lines.push(`\nMANDATORY CHECKS (VALIDATIONS ONLY — see rule 8(c)) — the user configured these exact checks in the Validation and Threshold section; every replayed request's check() block must assert them (in addition to the status/response-time checks already required by the REPLAY HARNESS PATTERN). These are informational validations, NOT pass/fail gates — a failing one must log a console.warn() WARNING, never fail the run or count as an error: ${checks.join(' | ')}\n`);
-  }
-
-  const thresholdEntries = Object.entries(cfg.thresholds ?? {});
-  if (thresholdEntries.length) {
-    const rendered = thresholdEntries.map(([metric, conds]) => `${metric}: ${conds.map(c => c.condition).join(', ')}`).join(' | ');
-    lines.push(`\nMANDATORY THRESHOLDS (SLA/SLO — see rule 8(b)) — the user configured these exact conditions in the Validation and Threshold section; use them verbatim in options.thresholds INSTEAD of the defaults in rule 8: ${rendered}. These ARE the pass/fail gate for the run — breaching any of them fails the test. If the metric is http_req_duration or http_req_failed, still apply the {endpoint_type:app} tag scope from rule 8 to the KEY (e.g. user condition "rate<0.01" on metric "http_req_failed" becomes 'http_req_failed{endpoint_type:app}': ['rate<0.01']) — the condition itself is exactly what the user typed, only the key gets the mandatory scope so InfluxDB traffic still can't affect it. Do not add a 'checks' threshold — checks are validations only (rule 8(c)) and must never gate pass/fail.\n`);
-  }
-
-  return lines.join('');
-}
-
-interface ReplayRequest {
-  name: string;
-  method: string;
-  path: string;
-  headers: Record<string, string>;
-  payload: string | null;
-  // 'form' means `payload` is a real {field: value} object (JSON-encoded) that
-  // must be sent as application/x-www-form-urlencoded, not parsed as JSON body.
-  payloadType: 'json' | 'form';
-  expectedStatus: number;
-  responseThresholdMs: number;
-  // See k6FromTestCases.ts ParsedTestCase.producesVars / harParser.ts
-  // applyIdCorrelation — path/payload may contain `{{token:capturedValue}}`
-  // placeholders; producesVars tells the replay harness which JSON path in
-  // THIS call's own response to re-extract the real value from at runtime.
-  producesVars?: { token: string; jsonPath: string }[];
-}
-
-interface LoginRequest {
-  method: string;
-  path: string;
-  headers: Record<string, string>;
-  payload: string | null;
-  payloadType: 'json' | 'form';
-  cookieNameHint: string | null;
-}
-
-function stripAuthHeaders(headers: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(headers)) {
-    if (!isAuthHeader(k)) out[k] = v;
-  }
-  return out;
-}
-
 // GetModuleRecordAccess is the call that PRODUCES the csrf token (see its
 // response's csrf-token header) — it must never carry a stale/"null"
 // x-csrf-token captured from the HAR, and it needs x-http-method-override
@@ -118,7 +65,6 @@ function stripAuthHeaders(headers: Record<string, string>): Record<string, strin
 //   x-http-method-override: GET
 //   Content-Type:           application/json
 const MODULE_RECORD_ACCESS_RE = /GetModuleRecordAccess/i;
-
 // STRICT HEADER ALLOWLIST for every non-login replay call — per explicit
 // product requirement, the generated script must carry ONLY these headers
 // on non-login requests, taken from the HAR exactly as specified:
@@ -147,85 +93,84 @@ const MODULE_RECORD_ACCESS_RE = /GetModuleRecordAccess/i;
 // request, including login/reauth) is the sole source of Cookie instead — it
 // accumulates every Set-Cookie exactly like a real browser would.
 // Every other header key present in the HAR is ignored outright.
-function buildReplayHeaders(tc: ParsedTestCase): Record<string, string> {
-  const findHeader = (name: string) => Object.entries(tc.headers).find(([k]) => k.toLowerCase() === name)?.[1];
-
-  if (MODULE_RECORD_ACCESS_RE.test(tc.url)) {
-    return { 'x-http-method-override': 'GET', 'Content-Type': 'application/json' };
-  }
-
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  const csrfToken = findHeader('x-csrf-token');
-  if (csrfToken) headers['x-csrf-token'] = csrfToken;
-  const archerSource = findHeader('x-archer-source');
-  if (archerSource) headers['x-archer-source'] = archerSource;
-  const requestedWith = findHeader('x-requested-with');
-  if (requestedWith) headers['x-requested-with'] = requestedWith;
-  return headers;
+function buildReplayHeaders(tc) {
+    const findHeader = (name) => Object.entries(tc.headers).find(([k]) => k.toLowerCase() === name)?.[1];
+    if (MODULE_RECORD_ACCESS_RE.test(tc.url)) {
+        return { 'x-http-method-override': 'GET', 'Content-Type': 'application/json' };
+    }
+    const headers = { 'Content-Type': 'application/json' };
+    const csrfToken = findHeader('x-csrf-token');
+    if (csrfToken)
+        headers['x-csrf-token'] = csrfToken;
+    const archerSource = findHeader('x-archer-source');
+    if (archerSource)
+        headers['x-archer-source'] = archerSource;
+    const requestedWith = findHeader('x-requested-with');
+    if (requestedWith)
+        headers['x-requested-with'] = requestedWith;
+    return headers;
 }
-
-function toReplayRequest(tc: ParsedTestCase): ReplayRequest {
-  return {
-    name: tc.name,
-    method: tc.method,
-    path: toUrlPath(tc.url),
-    headers: buildReplayHeaders(tc),
-    payload: tc.payload,
-    payloadType: tc.payloadType ?? 'json',
-    expectedStatus: tc.expectedStatus,
-    responseThresholdMs: tc.responseThresholdMs,
-    ...(tc.producesVars?.length ? { producesVars: tc.producesVars } : {}),
-  };
+function toReplayRequest(tc) {
+    return {
+        name: tc.name,
+        method: tc.method,
+        path: (0, k6FromTestCases_1.toUrlPath)(tc.url),
+        headers: buildReplayHeaders(tc),
+        payload: tc.payload,
+        payloadType: tc.payloadType ?? 'json',
+        expectedStatus: tc.expectedStatus,
+        responseThresholdMs: tc.responseThresholdMs,
+        ...(tc.producesVars?.length ? { producesVars: tc.producesVars } : {}),
+    };
 }
-
-function toLoginRequest(tc: ParsedTestCase, cookieNameHint: string | null): LoginRequest {
-  return {
-    method: tc.method,
-    path: toUrlPath(tc.url),
-    headers: { 'Content-Type': 'application/json', ...stripAuthHeaders(tc.headers) },
-    payload: tc.payload,
-    payloadType: tc.payloadType ?? 'json',
-    cookieNameHint,
-  };
+function toLoginRequest(tc, cookieNameHint) {
+    return {
+        method: tc.method,
+        path: (0, k6FromTestCases_1.toUrlPath)(tc.url),
+        headers: { 'Content-Type': 'application/json', ...stripAuthHeaders(tc.headers) },
+        payload: tc.payload,
+        payloadType: tc.payloadType ?? 'json',
+        cookieNameHint,
+    };
 }
-
-function detectBaseUrl(testCases: ParsedTestCase[]): string | null {
-  for (const tc of testCases) {
-    try { return new URL(tc.url).origin; } catch { /* relative URL — keep scanning */ }
-  }
-  return null;
+function detectBaseUrl(testCases) {
+    for (const tc of testCases) {
+        try {
+            return new URL(tc.url).origin;
+        }
+        catch { /* relative URL — keep scanning */ }
+    }
+    return null;
 }
-
-function describeLoadProfile(profile: LoadProfileConfig | null): string {
-  if (!profile) {
-    return `\nLOAD PROFILE — none was configured; use an environment-parameterized constant-VUs default rather than a hardcoded scenario, so the run can be resized without editing the script:
+function describeLoadProfile(profile) {
+    if (!profile) {
+        return `\nLOAD PROFILE — none was configured; use an environment-parameterized constant-VUs default rather than a hardcoded scenario, so the run can be resized without editing the script:
   const VUS = Number(__ENV.VUS) || 5;
   const DURATION = __ENV.DURATION || '1m';
 - The scenario's executor must be 'constant-vus' with vus: VUS and duration: DURATION.\n`;
-  }
-  if (profile.profileType === 'constant') {
-    return `\nMANDATORY LOAD PROFILE — the user explicitly configured this; use it exactly:
+    }
+    if (profile.profileType === 'constant') {
+        return `\nMANDATORY LOAD PROFILE — the user explicitly configured this; use it exactly:
 - Constant load: ${profile.constantVus ?? 10} VUs for ${profile.constantDuration ?? '1m'}.
 - The scenario's executor must be 'constant-vus' with vus: ${profile.constantVus ?? 10} and duration: '${profile.constantDuration ?? '1m'}'.\n`;
-  }
-  const stages = profile.stages && profile.stages.length > 0
-    ? profile.stages
-    : [{ target: 10, duration: '2m' }, { target: 10, duration: '5m' }, { target: 0, duration: '1m' }];
-  const stagesList = stages.map(s => `    { target: ${s.target}, duration: '${s.duration}' },`).join('\n');
-  return `\nMANDATORY LOAD PROFILE — the user explicitly configured this; use it exactly:
+    }
+    const stages = profile.stages && profile.stages.length > 0
+        ? profile.stages
+        : [{ target: 10, duration: '2m' }, { target: 10, duration: '5m' }, { target: 0, duration: '1m' }];
+    const stagesList = stages.map(s => `    { target: ${s.target}, duration: '${s.duration}' },`).join('\n');
+    return `\nMANDATORY LOAD PROFILE — the user explicitly configured this; use it exactly:
 - Ramping load with these exact stages (the scenario's executor must be 'ramping-vus' using this stages array verbatim):
   stages: [
 ${stagesList}
   ]\n`;
 }
-
-function buildHarSystemPrompt(baseUrl: string | null, loadProfile: LoadProfileConfig | null, totalCalls: number, hasLogin: boolean, useCsvCredentials: boolean, validationConfig: ValidationConfig | null): string {
-  return `You are an expert performance engineer specializing in k6 load testing with InfluxDB v2 integration. You are writing a REPLAY HARNESS for a captured browser session (HAR export) — a small, fixed amount of code that iterates generically over an already-extracted array of API calls. You do NOT write one code block per captured call; the calls themselves are supplied to you as a runtime data array, not something you transcribe.
+function buildHarSystemPrompt(baseUrl, loadProfile, totalCalls, hasLogin, useCsvCredentials, validationConfig) {
+    return `You are an expert performance engineer specializing in k6 load testing with InfluxDB v2 integration. You are writing a REPLAY HARNESS for a captured browser session (HAR export) — a small, fixed amount of code that iterates generically over an already-extracted array of API calls. You do NOT write one code block per captured call; the calls themselves are supplied to you as a runtime data array, not something you transcribe.
 ${describeLoadProfile(loadProfile)}${describeValidationConfig(validationConfig)}
 LOGIN_REQUEST and CAPTURED_REQUESTS are constants that will be injected into your script automatically — do NOT declare or redeclare them yourself, do NOT attempt to enumerate, copy, or transcribe their contents. Their shapes are:
   LOGIN_REQUEST: ${useCsvCredentials
-    ? `null — login credentials come from an uploaded CSV pool instead (see CSV-BASED PER-VU CREDENTIALS below); the captured session's own login call, if any, is excluded from CAPTURED_REQUESTS and unused.`
-    : hasLogin ? `{ method: string, path: string, headers: object, payload: string|null, payloadType: 'json'|'form', cookieNameHint: string|null } — a single detected login/auth call` : `null — no login/auth call was detected in the captured session`}
+        ? `null — login credentials come from an uploaded CSV pool instead (see CSV-BASED PER-VU CREDENTIALS below); the captured session's own login call, if any, is excluded from CAPTURED_REQUESTS and unused.`
+        : hasLogin ? `{ method: string, path: string, headers: object, payload: string|null, payloadType: 'json'|'form', cookieNameHint: string|null } — a single detected login/auth call` : `null — no login/auth call was detected in the captured session`}
   CAPTURED_REQUESTS: Array<{ name: string, method: string, path: string, headers: object, payload: string|null, payloadType: 'json'|'form', expectedStatus: number, responseThresholdMs: number, producesVars?: Array<{ token: string, jsonPath: string }> }> — the ${totalCalls} non-login calls to replay, in the order they were captured.
   payloadType 'form' means payload is a JSON-encoded {field: value} object that was originally submitted as application/x-www-form-urlencoded — it MUST be sent as a real form body (see requestBody() helper in the REPLAY HARNESS PATTERN below), never re-encoded as JSON.
 
@@ -233,7 +178,7 @@ LOGIN_REQUEST and CAPTURED_REQUESTS are constants that will be injected into you
 
 MANDATORY RULES — every rule must be followed exactly:
 1. Output ONLY valid JavaScript — no markdown, no code fences, no explanation text.
-2. Structure, in this exact order: (a) imports — http from 'k6/http', { check, group, sleep } from 'k6', metrics from 'k6/metrics', textSummary from the jslib summary URL; (b) the single line ${DATA_PLACEHOLDER} on its own line, verbatim, immediately after the imports — this is where the real captured-request data gets spliced in; (c) the InfluxDB v2 integration block shown below, word for word; (d) the REPLAY HARNESS PATTERN shown below; (e) handleSummary.
+2. Structure, in this exact order: (a) imports — http from 'k6/http', { check, group, sleep } from 'k6', metrics from 'k6/metrics', textSummary from the jslib summary URL; (b) the single line ${k6PromptBlocks_1.DATA_PLACEHOLDER} on its own line, verbatim, immediately after the imports — this is where the real captured-request data gets spliced in; (c) the InfluxDB v2 integration block shown below, word for word; (d) the REPLAY HARNESS PATTERN shown below; (e) handleSummary.
 3. Use __ENV.BASE_URL for all request base URLs, defaulting to ${baseUrl ? `'${baseUrl}' (this is the origin the captured calls were made against — do NOT use localhost)` : `'http://localhost:3000'`}.
 4. Do NOT write a separate function or group() per captured call. Write exactly the generic replayStep()/sessionReplay() functions shown in the REPLAY HARNESS PATTERN below — they already iterate over every entry in CAPTURED_REQUESTS, which guarantees complete coverage without you needing to enumerate anything.
 5. Declare 'export const options = { scenarios: {...}, thresholds: {...} };' EXACTLY ONCE in the whole script, using 'const' (never 'let'/'var'), immediately after imports — a script with more than one export named 'options' (regardless of declaration keyword) fails to load at all with "Duplicate export name 'options'" before a single request runs. Put scenarios AND thresholds in that single object literal; never declare a second 'options' block later to add thresholds or anything else, and never reassign/mutate 'options' after the fact as a substitute for getting the first declaration right. SCENARIO_MAX_VUS must be computed robustly across executor types (constant-vus uses vus, ramping-vus uses stages targets, arrival-rate executors use preAllocatedVUs/maxVUs) using Math.max and ?? (not ||):
@@ -252,9 +197,9 @@ MANDATORY RULES — every rule must be followed exactly:
 9. The InfluxDB block below already declares isResponseStatusExpected(response, expectedStatus) — reuse it verbatim, but ONLY for check()'s pass/fail label and the WARNING log text (per rule 8(c)) — never for deciding whether a response counts as a failure (that's rule 8(a): raw status >= 400, unconditionally, no isResponseStatusExpected involved). Do not redeclare isResponseStatusExpected, and do not reintroduce any per-endpoint or per-method tolerance function — none is needed anymore.
 10. ALWAYS include the closing 'export default function (setupData) { sessionReplay(setupData); }' shown at the end of the REPLAY HARNESS PATTERN, even though the scenario's own exec already names sessionReplay. It is a required safety net: a k6 script with no exported function at all fails to start with an opaque error instead of running.
 ${useCsvCredentials
-    ? `11. Login credentials come from an uploaded CSV pool (one login per VU) — see the CSV-BASED PER-VU CREDENTIALS pattern below. This is MANDATORY: do not use LOGIN_REQUEST or any setup()-based shared login for this script; every VU authenticates independently via ensureAuth() the first time sessionReplay() runs for it. Reproduce getVuCredential()/ensureAuth()/reauth()/extractJwt()/authHeadersFromAuth() verbatim, including the REQUIRED InstanceName field in the login payload — do not simplify, rename, or omit it.
+        ? `11. Login credentials come from an uploaded CSV pool (one login per VU) — see the CSV-BASED PER-VU CREDENTIALS pattern below. This is MANDATORY: do not use LOGIN_REQUEST or any setup()-based shared login for this script; every VU authenticates independently via ensureAuth() the first time sessionReplay() runs for it. Reproduce getVuCredential()/ensureAuth()/reauth()/extractJwt()/authHeadersFromAuth() verbatim, including the REQUIRED InstanceName field in the login payload — do not simplify, rename, or omit it.
 12. setup() must NEVER throw — it only performs the InfluxDB bootstrap; it does not attempt any login and does not create/return a cookie jar in this mode (each VU gets its own lazily via getVuJar() — see rule 14).`
-    : `11. Detect the login/auth call with the findLoginRequest() helper shown below (LOGIN_REQUEST if present, else the first CAPTURED_REQUESTS entry whose name/path mentions login/auth/signin, else none) — call it identically in both setup() and sessionReplay() so both agree on which entry is "the login" and which entries are ordinary replay steps. Never fall back to blindly treating CAPTURED_REQUESTS[0] as the login — an arbitrary first request (e.g. a homepage GET) is not necessarily auth-related.
+        : `11. Detect the login/auth call with the findLoginRequest() helper shown below (LOGIN_REQUEST if present, else the first CAPTURED_REQUESTS entry whose name/path mentions login/auth/signin, else none) — call it identically in both setup() and sessionReplay() so both agree on which entry is "the login" and which entries are ordinary replay steps. Never fall back to blindly treating CAPTURED_REQUESTS[0] as the login — an arbitrary first request (e.g. a homepage GET) is not necessarily auth-related.
 12. setup() must NEVER throw when authentication doesn't yield a session — log a warning and return null so the run continues without auth headers instead of aborting the whole test. A broken/expired captured login must degrade to "requests run unauthenticated" (surfacing as REAL 401/403 failures per rule 9, not silently tolerated ones), not stop execution entirely. Reproduce ensureAuth()/reauth()/extractSessionToken()/extractJwt()/authHeadersFromAuth() from the REPLAY HARNESS PATTERN below verbatim — the single captured login still runs once in setup() to avoid a login stampede, but each VU independently re-runs it via reauth() if and when ITS session actually expires (see rule 15), rather than every VU sharing one session/cookie for the whole run indefinitely.`}
 13. ID CORRELATION is MANDATORY, not optional — reproduce getByJsonPath()/substituteCorrelationVars() from the REPLAY HARNESS PATTERN below verbatim, declare \`const correlationVars = {};\` fresh at the top of sessionReplay() (a new empty object every iteration — never module-level), pass it into every replayStep() call, resolve \`__CORR_<token>_<literal>__\` placeholders in each request's path/payload against it before sending, and — for any entry with a non-empty producesVars — extract each token's real value from that entry's own response via getByJsonPath() immediately after it runs, storing it into correlationVars so later steps in the SAME iteration pick up the freshly created resource's real id instead of the stale capture-time literal.
 14. Every VU must use its own cookie jar, never one shared object handed down from setup() — reproduce getVuJar() from the REPLAY HARNESS PATTERN below verbatim and call it in sessionReplay(); do NOT read a jar off setupData.
@@ -263,8 +208,8 @@ ${useCsvCredentials
 17. CSRF PROPAGATION IS MANDATORY for every captured session, regardless of whether it happens to include a call to .../api/internal/Permission/GetModuleRecordAccess — reproduce the module-level \`__csrfToken\` variable and \`captureCsrfToken(reqDef, response)\` from the REPLAY HARNESS PATTERN below verbatim, call it in replayStep right after EVERY response comes back (both the initial and any 401-retry response, from ANY captured call, not just GetModuleRecordAccess — Archer's classic /api/* gateway rotates the csrf token on responses generally, and GetModuleRecordAccess is only a common source of it, not the sole one; a captured session that happens not to include it must still be able to obtain a valid token from whichever calls it DOES have), and override the request's x-csrf-token header with \`__csrfToken\` whenever it is non-empty — this MUST take priority over any x-csrf-token value baked into reqDef.headers from the HAR capture, which is a stale snapshot from capture time bound to a completely different (dead) session; a script that never overrides it for lack of a GetModuleRecordAccess call in the capture will send that stale literal on every classic /api/* call and 403 permanently. Do not scope __csrfToken per-iteration (unlike correlationVars) — like the session cookie, it stays valid across iterations once obtained. A csrf token is bound to the specific session that produced it — reproduce \`findCsrfPrimingRequest()\`/\`refreshCsrfToken(jar, authHeaders)\` verbatim too, and call \`refreshCsrfToken(jar, authHeadersFromAuth(__vuAuth))\` at the END of reauth(), right after \`__vuAuth\` is reassigned to the fresh session — otherwise the retried request after a reauth() sends a (new session, old csrf) pair, which Archer's classic /api/* gateway rejects with a generic IIS 403 that looks like a permissions error but is actually this exact mismatch.
 18. EXECUTION ORDER MUST MATCH THE HAR CAPTURE ORDER — CAPTURED_REQUESTS is already injected in the exact order the calls were captured (see its shape description above). Reproduce sessionReplay's loop EXACTLY as shown in the REPLAY HARNESS PATTERN below: a plain sequential \`for (let i = 0; i < replayRequests.length; i++)\` over the array as given, calling replayStep(replayRequests[i], ...) and letting that request's response come back (k6's http.request() is already synchronous/blocking, so this happens naturally) before moving on to i+1. Do NOT sort, group by method/endpoint, batch, deduplicate further, reverse, or otherwise reorder CAPTURED_REQUESTS or replayRequests in any way — a captured Login→CreateRecord→DeleteRecord flow depends on that exact sequence (e.g. DeleteRecord referencing an id CreateRecord just produced via ID CORRELATION per rule 13); replaying out of order breaks the flow even if every individual request is otherwise correct.
 
-${buildInfluxBlock(baseUrl)}
-${useCsvCredentials ? buildCsvCredentialAuthPatternBlock() : ''}
+${(0, k6PromptBlocks_1.buildInfluxBlock)(baseUrl)}
+${useCsvCredentials ? (0, k6PromptBlocks_1.buildCsvCredentialAuthPatternBlock)() : ''}
 ════════════════════════════════════════════════════════════════
 REPLAY HARNESS PATTERN — MANDATORY. Reproduce this pattern, adapting only
 TEST_NAME/SCENARIO_NAME/options to the captured session. Do not deviate from
@@ -872,56 +817,50 @@ export default function (setupData) {
 
 ════════════════════════════════════════════════════════════════
 
-${HANDLE_SUMMARY_BLOCK}
+${k6PromptBlocks_1.HANDLE_SUMMARY_BLOCK}
 Generate the k6 replay harness now. Output ONLY JavaScript, starting with the first import line.`;
 }
-
-function safeParseJson(content: string): unknown | null {
-  try { return JSON.parse(content); } catch { return null; }
-}
-
-async function streamHarness(
-  baseUrl: string | null,
-  loadProfile: LoadProfileConfig | null,
-  totalCalls: number,
-  hasLogin: boolean,
-  useCsvCredentials: boolean,
-  userMessage: string,
-  sendEvent: (type: string, data: any) => void,
-  validationConfig: ValidationConfig | null,
-): Promise<string> {
-  let stream: Awaited<ReturnType<Anthropic['messages']['stream']>> | null = null;
-  for (let attempt = 0; attempt < MAX_STREAM_ATTEMPTS; attempt++) {
+function safeParseJson(content) {
     try {
-      stream = await getAnthropicClient().messages.stream({
-        model: CLAUDE_MODEL,
-        max_tokens: 16000,
-        system: buildHarSystemPrompt(baseUrl, loadProfile, totalCalls, hasLogin, useCsvCredentials, validationConfig),
-        messages: [{ role: 'user', content: userMessage }],
-      });
-      break;
-    } catch (err: any) {
-      if (isOverloadedError(err) && attempt < MAX_STREAM_ATTEMPTS - 1) {
-        sendEvent('status', { message: `Claude is currently overloaded — retrying (${attempt + 1}/${MAX_STREAM_ATTEMPTS - 1})…` });
-        await new Promise(r => setTimeout(r, STREAM_BACKOFF_MS[attempt]));
-        continue;
-      }
-      throw err;
+        return JSON.parse(content);
     }
-  }
-  if (!stream) throw new Error('Failed to start generation after retries');
-
-  let fullScript = '';
-  for await (const chunk of stream) {
-    if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
-      const text = chunk.delta.text;
-      fullScript += text;
-      sendEvent('chunk', { text });
+    catch {
+        return null;
     }
-  }
-  return stripCodeFences(fullScript);
 }
-
+async function streamHarness(baseUrl, loadProfile, totalCalls, hasLogin, useCsvCredentials, userMessage, sendEvent, validationConfig) {
+    let stream = null;
+    for (let attempt = 0; attempt < anthropicClient_1.MAX_STREAM_ATTEMPTS; attempt++) {
+        try {
+            stream = await (0, anthropicClient_1.getAnthropicClient)().messages.stream({
+                model: anthropicClient_1.CLAUDE_MODEL,
+                max_tokens: 16000,
+                system: buildHarSystemPrompt(baseUrl, loadProfile, totalCalls, hasLogin, useCsvCredentials, validationConfig),
+                messages: [{ role: 'user', content: userMessage }],
+            });
+            break;
+        }
+        catch (err) {
+            if ((0, anthropicClient_1.isOverloadedError)(err) && attempt < anthropicClient_1.MAX_STREAM_ATTEMPTS - 1) {
+                sendEvent('status', { message: `Claude is currently overloaded — retrying (${attempt + 1}/${anthropicClient_1.MAX_STREAM_ATTEMPTS - 1})…` });
+                await new Promise(r => setTimeout(r, anthropicClient_1.STREAM_BACKOFF_MS[attempt]));
+                continue;
+            }
+            throw err;
+        }
+    }
+    if (!stream)
+        throw new Error('Failed to start generation after retries');
+    let fullScript = '';
+    for await (const chunk of stream) {
+        if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+            const text = chunk.delta.text;
+            fullScript += text;
+            sendEvent('chunk', { text });
+        }
+    }
+    return (0, anthropicClient_1.stripCodeFences)(fullScript);
+}
 // POST /api/har-generate — streaming SSE endpoint. Accepts one or more .har /
 // .json files (field name "files"). HAR-shaped files are parsed with the
 // structured parser (dedupe disabled, so every captured call survives); non-HAR
@@ -930,182 +869,173 @@ async function streamHarness(
 // literal data into the script Claude writes — Claude never hand-transcribes
 // the captured calls, which is what made large captures prone to truncation or
 // brace-mismatch syntax errors ("export only allowed in global scope").
-router.post('/har-generate', upload.any(), async (req: Request, res: Response) => {
-  const files = (req.files as Express.Multer.File[] | undefined) ?? [];
-
-  if (!hasAnthropicCredentials()) {
-    res.status(500).json({
-      error: 'Anthropic API credentials not configured. Set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) in backend/.env or as an environment variable.',
-    });
-    return;
-  }
-
-  if (files.length === 0) {
-    res.status(400).json({ error: 'No files uploaded. Use multipart/form-data with field name "files".' });
-    return;
-  }
-
-  let loadProfile: LoadProfileConfig | null = null;
-  try { loadProfile = req.body.loadProfile ? JSON.parse(req.body.loadProfile) : null; } catch { /* ignore */ }
-  let validationConfig: ValidationConfig | null = null;
-  try { validationConfig = req.body.validationConfig ? JSON.parse(req.body.validationConfig) : null; } catch { /* ignore */ }
-  const useCsvCredentials = req.body.useCsvCredentials === true || req.body.useCsvCredentials === 'true';
-  const credentialBatchId: string | undefined = req.body.credentialBatchId;
-
-  let csvCredentials: Awaited<ReturnType<typeof fetchScriptCredentials>> = [];
-  if (useCsvCredentials) {
-    if (typeof credentialBatchId !== 'string' || !credentialBatchId.trim()) {
-      res.status(422).json({
-        error: 'CSV-based credentials were requested but no credential batch was uploaded. Upload a login credentials CSV before generating the script.',
-      });
-      return;
-    }
-    csvCredentials = await fetchScriptCredentials(credentialBatchId);
-    if (csvCredentials.length === 0) {
-      res.status(422).json({
-        error: 'The uploaded credentials CSV/batch resolved to zero usable rows (check that it has URL, Username, Password, and InstanceName columns). Re-upload a valid credentials file.',
-      });
-      return;
-    }
-  }
-
-  const allTestCases: ParsedTestCase[] = [];
-  const warnings: string[] = [];
-  const rawJsonBlocks: string[] = [];
-  let totalSkipped = 0;
-
-  for (const file of files) {
-    const content = file.buffer.toString('utf-8');
-    try {
-      const { testCases, warnings: fileWarnings, skipped } = parseHar(content, file.originalname, { dedupe: false });
-      allTestCases.push(...testCases);
-      warnings.push(...fileWarnings);
-      totalSkipped += skipped;
-    } catch (err: any) {
-      if (String(err.message).includes('no HAR entries found')) {
-        // Not a HAR document — treat as arbitrary JSON context (e.g. a Postman
-        // collection or custom export) and let Claude interpret its shape.
-        const parsed = safeParseJson(content);
-        if (parsed !== null) {
-          rawJsonBlocks.push(`// From ${file.originalname}:\n${JSON.stringify(parsed, null, 2)}`);
-        } else {
-          warnings.push(`${file.originalname}: not a valid HAR export or JSON file — skipped`);
-        }
-      } else {
-        warnings.push(`${file.originalname}: ${err.message}`);
-      }
-    }
-  }
-
-  if (allTestCases.length === 0 && rawJsonBlocks.length === 0) {
-    res.status(422).json({
-      error: 'No API requests found across the uploaded file(s). Check that the files are valid HAR exports with captured network traffic, or JSON files describing API calls.',
-      warnings,
-    });
-    return;
-  }
-
-  let cappedTestCases = allTestCases;
-  if (allTestCases.length > MAX_CAPTURED_CALLS) {
-    cappedTestCases = allTestCases.slice(0, MAX_CAPTURED_CALLS);
-    warnings.push(`Captured ${allTestCases.length} calls, exceeding the ${MAX_CAPTURED_CALLS}-call limit for a single script — only the first ${MAX_CAPTURED_CALLS} were used.`);
-  }
-
-  const baseUrl = detectBaseUrl(cappedTestCases);
-
-  // Deterministically split the login call from the rest — this is the same
-  // detection already used by the non-AI /api/upload/har generator, reused here
-  // so both paths agree on what counts as a "login".
-  const loginCase = cappedTestCases.find(isAuthEntry) ?? null;
-  const replayCases = cappedTestCases.filter(tc => tc !== loginCase);
-  const cookieNameHint = replayCases.map(tc => tc.cookieNames?.[0]).find((n): n is string => !!n) ?? null;
-
-  // When CSV-based credentials are in play, login comes from the uploaded
-  // credential pool at execution time, not from anything captured in the HAR —
-  // LOGIN_REQUEST is always null in that mode (the detected login-like call is
-  // still excluded from replayCases above, just never used for auth).
-  const loginRequest: LoginRequest | null = (!useCsvCredentials && loginCase) ? toLoginRequest(loginCase, cookieNameHint) : null;
-  const replayRequests: ReplayRequest[] = replayCases.map(toReplayRequest);
-
-  const dataBlock = `const LOGIN_REQUEST = ${JSON.stringify(loginRequest)};
-const CAPTURED_REQUESTS = ${JSON.stringify(replayRequests)};`;
-
-  const userMessageParts = [
-    useCsvCredentials
-      ? `Login credentials come from an uploaded CSV pool (one login per VU) — LOGIN_REQUEST will be null at runtime; do not use it for authentication.`
-      : loginRequest
-      ? `A login/auth call was detected among the captured requests and will be available at runtime as LOGIN_REQUEST.`
-      : `No login/auth call was detected among the captured requests — LOGIN_REQUEST will be null at runtime.`,
-    `${replayRequests.length} non-login calls were captured and will be available at runtime as CAPTURED_REQUESTS, in this chronological order (sample of the first 3 entries below, for shape reference only — do NOT copy these into your output, all ${replayRequests.length} entries are injected automatically):`,
-    '```json',
-    JSON.stringify(replayRequests.slice(0, 3), null, 2),
-    '```',
-  ];
-  if (rawJsonBlocks.length) {
-    userMessageParts.push(
-      '\nAdditional JSON context from non-HAR uploaded file(s) (format may vary — use only to inform TEST_NAME/thresholds, not as extra requests to replay):',
-      rawJsonBlocks.join('\n\n'),
-    );
-  }
-  userMessageParts.push('\nGenerate the replay harness now, per the REPLAY HARNESS PATTERN. Output ONLY the JavaScript code.');
-  const userMessage = userMessageParts.join('\n\n');
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders();
-
-  const sendEvent = (type: string, data: any) => {
-    res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
-  };
-
-  try {
-    sendEvent('status', { message: `Analyzing ${replayRequests.length} captured API calls with Claude…` });
-
-    let fullScript = await streamHarness(baseUrl, loadProfile, replayRequests.length, !!loginRequest, useCsvCredentials, userMessage, sendEvent, validationConfig);
-    fullScript = injectCapturedData(fullScript, dataBlock);
-
-    if (!isBraceBalanced(fullScript)) {
-      sendEvent('status', { message: 'Generated script failed a structural check — retrying once…' });
-      fullScript = await streamHarness(baseUrl, loadProfile, replayRequests.length, !!loginRequest, useCsvCredentials, userMessage, sendEvent, validationConfig);
-      fullScript = injectCapturedData(fullScript, dataBlock);
-
-      if (!isBraceBalanced(fullScript)) {
-        sendEvent('error', { message: 'Claude produced a script with mismatched braces twice in a row. Please try again — if this keeps happening, try uploading a smaller HAR file.' });
-        res.end();
+router.post('/har-generate', upload.any(), async (req, res) => {
+    const files = req.files ?? [];
+    if (!(0, anthropicClient_1.hasAnthropicCredentials)()) {
+        res.status(500).json({
+            error: 'Anthropic API credentials not configured. Set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) in backend/.env or as an environment variable.',
+        });
         return;
-      }
     }
-
-    // Bake the real uploaded CSV rows into the script now, rather than leaving
-    // the CREDENTIALS placeholder for execution time — the credentials are
-    // part of the generated script, not something spliced in later.
-    if (useCsvCredentials && csvCredentials.length > 0) {
-      fullScript = injectCredentials(fullScript, csvCredentials);
+    if (files.length === 0) {
+        res.status(400).json({ error: 'No files uploaded. Use multipart/form-data with field name "files".' });
+        return;
     }
-
-    sendEvent('complete', {
-      script: fullScript,
-      testCases: [...(loginCase ? [loginCase] : []), ...replayCases],
-      warnings,
-      skipped: totalSkipped,
-      filesProcessed: files.length,
-    });
-    res.end();
-  } catch (err: any) {
-    if (err.name === 'AbortError') { res.end(); return; }
-    if (err.status === 401) {
-      sendEvent('error', { message: 'Invalid Anthropic API key. Check your ANTHROPIC_API_KEY.' });
-    } else if (err.status === 429) {
-      sendEvent('error', { message: 'Rate limit reached. Please wait a moment and try again.' });
-    } else if (isOverloadedError(err)) {
-      sendEvent('error', { message: "Claude's servers are overloaded right now. We retried a few times but it didn't recover — please try again in a minute." });
-    } else {
-      sendEvent('error', { message: err.message || 'HAR/JSON script generation failed' });
+    let loadProfile = null;
+    try {
+        loadProfile = req.body.loadProfile ? JSON.parse(req.body.loadProfile) : null;
     }
-    res.end();
-  }
+    catch { /* ignore */ }
+    let validationConfig = null;
+    try {
+        validationConfig = req.body.validationConfig ? JSON.parse(req.body.validationConfig) : null;
+    }
+    catch { /* ignore */ }
+    const useCsvCredentials = req.body.useCsvCredentials === true || req.body.useCsvCredentials === 'true';
+    const credentialBatchId = req.body.credentialBatchId;
+    let csvCredentials = [];
+    if (useCsvCredentials) {
+        if (typeof credentialBatchId !== 'string' || !credentialBatchId.trim()) {
+            res.status(422).json({
+                error: 'CSV-based credentials were requested but no credential batch was uploaded. Upload a login credentials CSV before generating the script.',
+            });
+            return;
+        }
+        csvCredentials = await (0, credentialStore_1.fetchScriptCredentials)(credentialBatchId);
+        if (csvCredentials.length === 0) {
+            res.status(422).json({
+                error: 'The uploaded credentials CSV/batch resolved to zero usable rows (check that it has URL, Username, Password, and InstanceName columns). Re-upload a valid credentials file.',
+            });
+            return;
+        }
+    }
+    const allTestCases = [];
+    const warnings = [];
+    const rawJsonBlocks = [];
+    let totalSkipped = 0;
+    for (const file of files) {
+        const content = file.buffer.toString('utf-8');
+        try {
+            const { testCases, warnings: fileWarnings, skipped } = (0, harParser_1.parseHar)(content, file.originalname, { dedupe: false });
+            allTestCases.push(...testCases);
+            warnings.push(...fileWarnings);
+            totalSkipped += skipped;
+        }
+        catch (err) {
+            if (String(err.message).includes('no HAR entries found')) {
+                // Not a HAR document — treat as arbitrary JSON context (e.g. a Postman
+                // collection or custom export) and let Claude interpret its shape.
+                const parsed = safeParseJson(content);
+                if (parsed !== null) {
+                    rawJsonBlocks.push(`// From ${file.originalname}:\n${JSON.stringify(parsed, null, 2)}`);
+                }
+                else {
+                    warnings.push(`${file.originalname}: not a valid HAR export or JSON file — skipped`);
+                }
+            }
+            else {
+                warnings.push(`${file.originalname}: ${err.message}`);
+            }
+        }
+    }
+    if (allTestCases.length === 0 && rawJsonBlocks.length === 0) {
+        res.status(422).json({
+            error: 'No API requests found across the uploaded file(s). Check that the files are valid HAR exports with captured network traffic, or JSON files describing API calls.',
+            warnings,
+        });
+        return;
+    }
+    let cappedTestCases = allTestCases;
+    if (allTestCases.length > MAX_CAPTURED_CALLS) {
+        cappedTestCases = allTestCases.slice(0, MAX_CAPTURED_CALLS);
+        warnings.push(`Captured ${allTestCases.length} calls, exceeding the ${MAX_CAPTURED_CALLS}-call limit for a single script — only the first ${MAX_CAPTURED_CALLS} were used.`);
+    }
+    const baseUrl = detectBaseUrl(cappedTestCases);
+    // Deterministically split the login call from the rest — this is the same
+    // detection already used by the non-AI /api/upload/har generator, reused here
+    // so both paths agree on what counts as a "login".
+    const loginCase = cappedTestCases.find(k6FromTestCases_1.isAuthEntry) ?? null;
+    const replayCases = cappedTestCases.filter(tc => tc !== loginCase);
+    const cookieNameHint = replayCases.map(tc => tc.cookieNames?.[0]).find((n) => !!n) ?? null;
+    // When CSV-based credentials are in play, login comes from the uploaded
+    // credential pool at execution time, not from anything captured in the HAR —
+    // LOGIN_REQUEST is always null in that mode (the detected login-like call is
+    // still excluded from replayCases above, just never used for auth).
+    const loginRequest = (!useCsvCredentials && loginCase) ? toLoginRequest(loginCase, cookieNameHint) : null;
+    const replayRequests = replayCases.map(toReplayRequest);
+    const dataBlock = `const LOGIN_REQUEST = ${JSON.stringify(loginRequest)};
+const CAPTURED_REQUESTS = ${JSON.stringify(replayRequests)};`;
+    const userMessageParts = [
+        useCsvCredentials
+            ? `Login credentials come from an uploaded CSV pool (one login per VU) — LOGIN_REQUEST will be null at runtime; do not use it for authentication.`
+            : loginRequest
+                ? `A login/auth call was detected among the captured requests and will be available at runtime as LOGIN_REQUEST.`
+                : `No login/auth call was detected among the captured requests — LOGIN_REQUEST will be null at runtime.`,
+        `${replayRequests.length} non-login calls were captured and will be available at runtime as CAPTURED_REQUESTS, in this chronological order (sample of the first 3 entries below, for shape reference only — do NOT copy these into your output, all ${replayRequests.length} entries are injected automatically):`,
+        '```json',
+        JSON.stringify(replayRequests.slice(0, 3), null, 2),
+        '```',
+    ];
+    if (rawJsonBlocks.length) {
+        userMessageParts.push('\nAdditional JSON context from non-HAR uploaded file(s) (format may vary — use only to inform TEST_NAME/thresholds, not as extra requests to replay):', rawJsonBlocks.join('\n\n'));
+    }
+    userMessageParts.push('\nGenerate the replay harness now, per the REPLAY HARNESS PATTERN. Output ONLY the JavaScript code.');
+    const userMessage = userMessageParts.join('\n\n');
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    const sendEvent = (type, data) => {
+        res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+    };
+    try {
+        sendEvent('status', { message: `Analyzing ${replayRequests.length} captured API calls with Claude…` });
+        let fullScript = await streamHarness(baseUrl, loadProfile, replayRequests.length, !!loginRequest, useCsvCredentials, userMessage, sendEvent, validationConfig);
+        fullScript = (0, k6PromptBlocks_1.injectCapturedData)(fullScript, dataBlock);
+        if (!(0, k6ScriptValidator_1.isBraceBalanced)(fullScript)) {
+            sendEvent('status', { message: 'Generated script failed a structural check — retrying once…' });
+            fullScript = await streamHarness(baseUrl, loadProfile, replayRequests.length, !!loginRequest, useCsvCredentials, userMessage, sendEvent, validationConfig);
+            fullScript = (0, k6PromptBlocks_1.injectCapturedData)(fullScript, dataBlock);
+            if (!(0, k6ScriptValidator_1.isBraceBalanced)(fullScript)) {
+                sendEvent('error', { message: 'Claude produced a script with mismatched braces twice in a row. Please try again — if this keeps happening, try uploading a smaller HAR file.' });
+                res.end();
+                return;
+            }
+        }
+        // Bake the real uploaded CSV rows into the script now, rather than leaving
+        // the CREDENTIALS placeholder for execution time — the credentials are
+        // part of the generated script, not something spliced in later.
+        if (useCsvCredentials && csvCredentials.length > 0) {
+            fullScript = (0, k6PromptBlocks_1.injectCredentials)(fullScript, csvCredentials);
+        }
+        sendEvent('complete', {
+            script: fullScript,
+            testCases: [...(loginCase ? [loginCase] : []), ...replayCases],
+            warnings,
+            skipped: totalSkipped,
+            filesProcessed: files.length,
+        });
+        res.end();
+    }
+    catch (err) {
+        if (err.name === 'AbortError') {
+            res.end();
+            return;
+        }
+        if (err.status === 401) {
+            sendEvent('error', { message: 'Invalid Anthropic API key. Check your ANTHROPIC_API_KEY.' });
+        }
+        else if (err.status === 429) {
+            sendEvent('error', { message: 'Rate limit reached. Please wait a moment and try again.' });
+        }
+        else if ((0, anthropicClient_1.isOverloadedError)(err)) {
+            sendEvent('error', { message: "Claude's servers are overloaded right now. We retried a few times but it didn't recover — please try again in a minute." });
+        }
+        else {
+            sendEvent('error', { message: err.message || 'HAR/JSON script generation failed' });
+        }
+        res.end();
+    }
 });
-
-export default router;
+exports.default = router;

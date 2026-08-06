@@ -1,3 +1,16 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CREDENTIALS_PLACEHOLDER = exports.DATA_PLACEHOLDER = exports.HANDLE_SUMMARY_BLOCK = void 0;
+exports.buildInfluxBlock = buildInfluxBlock;
+exports.buildGenericAuthPatternBlock = buildGenericAuthPatternBlock;
+exports.buildCsvCredentialAuthPatternBlock = buildCsvCredentialAuthPatternBlock;
+exports.buildModuleRecordAccessPatternBlock = buildModuleRecordAccessPatternBlock;
+exports.buildInfluxAndAuthBlock = buildInfluxAndAuthBlock;
+exports.injectCredentials = injectCredentials;
+exports.injectCapturedData = injectCapturedData;
+exports.extractCapturedData = extractCapturedData;
+exports.extractCredentials = extractCredentials;
+exports.injectCredentialsBlock = injectCredentialsBlock;
 // Shared prompt text embedded in every Claude-generated k6 script. Split into
 // three pieces so callers can mix and match:
 //   - buildInfluxBlock: env vars / metrics / helpers / baseline setup+teardown
@@ -11,8 +24,8 @@
 // HANDLE_SUMMARY_BLOCK — it writes its own auth instructions because it
 // deterministically injects the login request as a LOGIN_REQUEST constant
 // rather than asking Claude to transcribe it.
-export function buildInfluxBlock(baseUrl: string | null): string {
-  return `════════════════════════════════════════════════════════════════
+function buildInfluxBlock(baseUrl) {
+    return `════════════════════════════════════════════════════════════════
 INFLUXDB INTEGRATION — EMBED THIS BLOCK EXACTLY IN EVERY SCRIPT
 ════════════════════════════════════════════════════════════════
 
@@ -199,9 +212,8 @@ export function teardown() {
 }
 `;
 }
-
-export function buildGenericAuthPatternBlock(): string {
-  return `════════════════════════════════════════════════════════════════
+function buildGenericAuthPatternBlock() {
+    return `════════════════════════════════════════════════════════════════
 AUTHENTICATION PATTERN — MANDATORY whenever the test cases involve a login/auth
 step. Login ONCE in setup(), not per-VU/per-iteration, to avoid concurrent-login
 failures (e.g. rate limits, session collisions) when many VUs ramp up in parallel.
@@ -387,9 +399,8 @@ exact) can end up higher than the request count the report derives from
 requestsRaw.
 `;
 }
-
-export function buildCsvCredentialAuthPatternBlock(): string {
-  return `════════════════════════════════════════════════════════════════
+function buildCsvCredentialAuthPatternBlock() {
+    return `════════════════════════════════════════════════════════════════
 AUTHENTICATION PATTERN — CSV-BASED PER-VU CREDENTIALS. MANDATORY when the user
 has opted into CSV-based login credentials. Do NOT write a generic single
 shared setup() login for this mode — every VU logs in with its own
@@ -400,7 +411,7 @@ Declare this CREDENTIALS placeholder right after the InfluxDB block's env vars
 (the literal comment must be preserved verbatim — the real credential rows are
 spliced in at execution time, replacing the placeholder comment):
 
-const CREDENTIALS = ${CREDENTIALS_PLACEHOLDER}[];
+const CREDENTIALS = ${exports.CREDENTIALS_PLACEHOLDER}[];
 // Each entry has the shape: { loginUrl, username, password, instanceName } —
 // these come verbatim from the uploaded CSV's URL / Username / Password /
 // InstanceName columns. InstanceName is REQUIRED by the login API (Archer IRM
@@ -561,7 +572,6 @@ k6VusMax, testStartEnd 'started') exactly as shown in the InfluxDB block above,
 just without any login logic.
 `;
 }
-
 // Archer's GetModuleRecordAccess endpoint needs a header shape that diverges
 // from every other authenticated call in the script (see the incident this
 // codifies: a Postman replay of this exact call redirected to Default.aspx
@@ -569,8 +579,8 @@ just without any login logic.
 // This block is appended whenever the test cases target that endpoint so
 // Claude reproduces the two-header call and the resulting csrf-token capture
 // exactly, instead of reusing the generic AUTHENTICATION PATTERN's headers.
-export function buildModuleRecordAccessPatternBlock(): string {
-  return `════════════════════════════════════════════════════════════════
+function buildModuleRecordAccessPatternBlock() {
+    return `════════════════════════════════════════════════════════════════
 GetModuleRecordAccess HEADER PATTERN — MANDATORY whenever a test case calls
 .../api/internal/Permission/GetModuleRecordAccess. This endpoint's header
 requirements are stricter than the generic AUTHENTICATION PATTERN above and
@@ -651,21 +661,18 @@ const csrfRes = http.post(BASE_URL + '<GetModuleRecordAccess captured path>', pa
 csrfToken = csrfRes.headers['csrf-token'] || csrfRes.headers['Csrf-Token'] || csrfToken;
 `;
 }
-
-export const HANDLE_SUMMARY_BLOCK = `handleSummary — output ONLY stdout, no file writes:
+exports.HANDLE_SUMMARY_BLOCK = `handleSummary — output ONLY stdout, no file writes:
 export function handleSummary(data) {
   return { stdout: textSummary(data, { indent: ' ', enableColors: true }) };
 }
 `;
-
 // Backwards-compatible combined block (InfluxDB baseline + generic auth pattern +
 // handleSummary) — matches the original single-block text used by /api/ai-generate.
-export function buildInfluxAndAuthBlock(baseUrl: string | null): string {
-  return `${buildInfluxBlock(baseUrl)}
+function buildInfluxAndAuthBlock(baseUrl) {
+    return `${buildInfluxBlock(baseUrl)}
 ${buildGenericAuthPatternBlock()}
-${HANDLE_SUMMARY_BLOCK}`;
+${exports.HANDLE_SUMMARY_BLOCK}`;
 }
-
 // ────────────────────────────────────────────────────────────────────────────
 // Captured-data placeholder splicing — shared by /api/har-generate (initial
 // generation) and /api/ai-refine (iterative edits). Scripts produced from a HAR
@@ -676,140 +683,137 @@ ${HANDLE_SUMMARY_BLOCK}`;
 // JS that k6's goja engine reports opaquely as "export only allowed in global
 // scope" or similar. Instead: strip the two constants out before prompting,
 // have Claude work against a placeholder, then splice the real data back in.
-export const DATA_PLACEHOLDER = '/*__PERFOPS_CAPTURED_DATA__*/';
-
+exports.DATA_PLACEHOLDER = '/*__PERFOPS_CAPTURED_DATA__*/';
 // Placeholder for the CSV-based per-VU login credential pool (see
 // buildCsvCredentialAuthPatternBlock above). The real rows — uploaded on the
 // Executor page and cached in Postgres for the duration of the run — are
 // spliced in right before dispatch, exactly like DATA_PLACEHOLDER above.
-export const CREDENTIALS_PLACEHOLDER = '/*__PERFOPS_CREDENTIALS__*/';
-
-export interface ScriptCredential {
-  loginUrl: string;
-  username: string;
-  password: string;
-  instanceName: string;
-}
-
+exports.CREDENTIALS_PLACEHOLDER = '/*__PERFOPS_CREDENTIALS__*/';
 // Splices the real credential pool into a script containing
 // `const CREDENTIALS = /*__PERFOPS_CREDENTIALS__*/[];`. Falls back to
 // inserting right after the last top-level import if the placeholder comment
 // is missing (e.g. a hand-written or older script) — same fallback strategy
 // as injectCapturedData below.
-export function injectCredentials(script: string, credentials: ScriptCredential[]): string {
-  const arrayLiteral = JSON.stringify(credentials);
-  if (script.includes(CREDENTIALS_PLACEHOLDER)) {
-    return script.replace(`${CREDENTIALS_PLACEHOLDER}[]`, arrayLiteral)
-                 .replace(CREDENTIALS_PLACEHOLDER, arrayLiteral);
-  }
-  const constLine = `const CREDENTIALS = ${arrayLiteral};`;
-  const importRegex = /^import .*;\s*$/gm;
-  let lastImportEnd = -1;
-  let match: RegExpExecArray | null;
-  while ((match = importRegex.exec(script)) !== null) {
-    lastImportEnd = match.index + match[0].length;
-  }
-  if (lastImportEnd === -1) return `${constLine}\n\n${script}`;
-  return `${script.slice(0, lastImportEnd)}\n\n${constLine}\n${script.slice(lastImportEnd)}`;
+function injectCredentials(script, credentials) {
+    const arrayLiteral = JSON.stringify(credentials);
+    if (script.includes(exports.CREDENTIALS_PLACEHOLDER)) {
+        return script.replace(`${exports.CREDENTIALS_PLACEHOLDER}[]`, arrayLiteral)
+            .replace(exports.CREDENTIALS_PLACEHOLDER, arrayLiteral);
+    }
+    const constLine = `const CREDENTIALS = ${arrayLiteral};`;
+    const importRegex = /^import .*;\s*$/gm;
+    let lastImportEnd = -1;
+    let match;
+    while ((match = importRegex.exec(script)) !== null) {
+        lastImportEnd = match.index + match[0].length;
+    }
+    if (lastImportEnd === -1)
+        return `${constLine}\n\n${script}`;
+    return `${script.slice(0, lastImportEnd)}\n\n${constLine}\n${script.slice(lastImportEnd)}`;
 }
-
 // Splices the real captured-request data into a Claude-produced script. Prefers
 // the placeholder Claude was told to leave; falls back to inserting right after
 // the last top-level `import ...;` line if the placeholder is missing for any
 // reason (e.g. Claude dropped it despite instructions).
-export function injectCapturedData(script: string, dataBlock: string): string {
-  if (script.includes(DATA_PLACEHOLDER)) {
-    return script.replace(DATA_PLACEHOLDER, dataBlock);
-  }
-  const importRegex = /^import .*;\s*$/gm;
-  let lastImportEnd = -1;
-  let match: RegExpExecArray | null;
-  while ((match = importRegex.exec(script)) !== null) {
-    lastImportEnd = match.index + match[0].length;
-  }
-  if (lastImportEnd === -1) return `${dataBlock}\n\n${script}`;
-  return `${script.slice(0, lastImportEnd)}\n\n${dataBlock}\n${script.slice(lastImportEnd)}`;
+function injectCapturedData(script, dataBlock) {
+    if (script.includes(exports.DATA_PLACEHOLDER)) {
+        return script.replace(exports.DATA_PLACEHOLDER, dataBlock);
+    }
+    const importRegex = /^import .*;\s*$/gm;
+    let lastImportEnd = -1;
+    let match;
+    while ((match = importRegex.exec(script)) !== null) {
+        lastImportEnd = match.index + match[0].length;
+    }
+    if (lastImportEnd === -1)
+        return `${dataBlock}\n\n${script}`;
+    return `${script.slice(0, lastImportEnd)}\n\n${dataBlock}\n${script.slice(lastImportEnd)}`;
 }
-
 // Finds the index of the `;` that terminates the value starting at `start`,
 // tracking {}/[] nesting depth and skipping over quoted string contents (so
 // braces/brackets/semicolons inside a captured payload string don't throw off
 // the count). Returns -1 if no terminating `;` is found at depth 0.
-function findStatementEnd(script: string, start: number): number {
-  let i = start;
-  const n = script.length;
-  let depth = 0;
-  while (i < n) {
-    const c = script[i];
-    if (c === '"' || c === '\'') {
-      const quote = c;
-      i++;
-      while (i < n && script[i] !== quote) { if (script[i] === '\\') i++; i++; }
-      i++;
-      continue;
+function findStatementEnd(script, start) {
+    let i = start;
+    const n = script.length;
+    let depth = 0;
+    while (i < n) {
+        const c = script[i];
+        if (c === '"' || c === '\'') {
+            const quote = c;
+            i++;
+            while (i < n && script[i] !== quote) {
+                if (script[i] === '\\')
+                    i++;
+                i++;
+            }
+            i++;
+            continue;
+        }
+        if (c === '{' || c === '[') {
+            depth++;
+            i++;
+            continue;
+        }
+        if (c === '}' || c === ']') {
+            depth--;
+            i++;
+            continue;
+        }
+        if (c === ';' && depth <= 0)
+            return i;
+        i++;
     }
-    if (c === '{' || c === '[') { depth++; i++; continue; }
-    if (c === '}' || c === ']') { depth--; i++; continue; }
-    if (c === ';' && depth <= 0) return i;
-    i++;
-  }
-  return -1;
+    return -1;
 }
-
 // Extracts the verbatim `const LOGIN_REQUEST = ...;` and
 // `const CAPTURED_REQUESTS = ...;` statements from a HAR-generated script (in
 // whichever order they appear) and replaces them with DATA_PLACEHOLDER, so the
 // stripped script can be safely sent to Claude for refinement without asking it
 // to transcribe the captured data. Returns null if the script doesn't contain
 // both constants (e.g. a plain /api/ai-generate script with no captured data).
-export function extractCapturedData(script: string): { dataBlock: string; strippedScript: string } | null {
-  const loginMatch = script.match(/const\s+LOGIN_REQUEST\s*=/);
-  const reqMatch = script.match(/const\s+CAPTURED_REQUESTS\s*=/);
-  if (!loginMatch || loginMatch.index === undefined || !reqMatch || reqMatch.index === undefined) return null;
-
-  const loginSemi = findStatementEnd(script, loginMatch.index + loginMatch[0].length);
-  const reqSemi = findStatementEnd(script, reqMatch.index + reqMatch[0].length);
-  if (loginSemi === -1 || reqSemi === -1) return null;
-
-  const stmts = [
-    { start: loginMatch.index, end: loginSemi + 1 },
-    { start: reqMatch.index, end: reqSemi + 1 },
-  ].sort((a, b) => a.start - b.start);
-
-  const dataBlock = stmts.map(s => script.slice(s.start, s.end)).join('\n');
-  const firstStart = stmts[0].start;
-
-  let stripped = script;
-  for (const s of [...stmts].sort((a, b) => b.start - a.start)) {
-    stripped = stripped.slice(0, s.start) + stripped.slice(s.end);
-  }
-  stripped = stripped.slice(0, firstStart) + DATA_PLACEHOLDER + '\n' + stripped.slice(firstStart);
-
-  return { dataBlock, strippedScript: stripped };
+function extractCapturedData(script) {
+    const loginMatch = script.match(/const\s+LOGIN_REQUEST\s*=/);
+    const reqMatch = script.match(/const\s+CAPTURED_REQUESTS\s*=/);
+    if (!loginMatch || loginMatch.index === undefined || !reqMatch || reqMatch.index === undefined)
+        return null;
+    const loginSemi = findStatementEnd(script, loginMatch.index + loginMatch[0].length);
+    const reqSemi = findStatementEnd(script, reqMatch.index + reqMatch[0].length);
+    if (loginSemi === -1 || reqSemi === -1)
+        return null;
+    const stmts = [
+        { start: loginMatch.index, end: loginSemi + 1 },
+        { start: reqMatch.index, end: reqSemi + 1 },
+    ].sort((a, b) => a.start - b.start);
+    const dataBlock = stmts.map(s => script.slice(s.start, s.end)).join('\n');
+    const firstStart = stmts[0].start;
+    let stripped = script;
+    for (const s of [...stmts].sort((a, b) => b.start - a.start)) {
+        stripped = stripped.slice(0, s.start) + stripped.slice(s.end);
+    }
+    stripped = stripped.slice(0, firstStart) + exports.DATA_PLACEHOLDER + '\n' + stripped.slice(firstStart);
+    return { dataBlock, strippedScript: stripped };
 }
-
 // Same idea as extractCapturedData, but for the baked-in `const CREDENTIALS =
 // [...]` array from CSV-based auth scripts. Without this, /api/ai-refine would
 // send the real credential rows to Claude as plain text and ask it to
 // reproduce them verbatim in its rewrite — risking the same truncation/typo
 // hazard as captured requests, and unnecessarily exposing plaintext passwords
 // in the prompt. Returns null if the script has no CREDENTIALS constant.
-export function extractCredentials(script: string): { dataBlock: string; strippedScript: string } | null {
-  const credMatch = script.match(/const\s+CREDENTIALS\s*=/);
-  if (!credMatch || credMatch.index === undefined) return null;
-
-  const credSemi = findStatementEnd(script, credMatch.index + credMatch[0].length);
-  if (credSemi === -1) return null;
-
-  const start = credMatch.index;
-  const end = credSemi + 1;
-  const dataBlock = script.slice(start, end);
-  const stripped = script.slice(0, start) + `const CREDENTIALS = ${CREDENTIALS_PLACEHOLDER}[];` + script.slice(end);
-
-  return { dataBlock, strippedScript: stripped };
+function extractCredentials(script) {
+    const credMatch = script.match(/const\s+CREDENTIALS\s*=/);
+    if (!credMatch || credMatch.index === undefined)
+        return null;
+    const credSemi = findStatementEnd(script, credMatch.index + credMatch[0].length);
+    if (credSemi === -1)
+        return null;
+    const start = credMatch.index;
+    const end = credSemi + 1;
+    const dataBlock = script.slice(start, end);
+    const stripped = script.slice(0, start) + `const CREDENTIALS = ${exports.CREDENTIALS_PLACEHOLDER}[];` + script.slice(end);
+    return { dataBlock, strippedScript: stripped };
 }
-
 // Splices a previously-extracted `const CREDENTIALS = [...]` statement back in.
-export function injectCredentialsBlock(script: string, dataBlock: string): string {
-  return script.replace(`const CREDENTIALS = ${CREDENTIALS_PLACEHOLDER}[];`, dataBlock);
+function injectCredentialsBlock(script, dataBlock) {
+    return script.replace(`const CREDENTIALS = ${exports.CREDENTIALS_PLACEHOLDER}[];`, dataBlock);
 }

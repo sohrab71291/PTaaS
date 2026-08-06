@@ -98,6 +98,7 @@ export interface Execution {
   finishedAt: string | null;
   scheduledFor?: string;
   duration: number | null;
+  errorMessage?: string | null;
   metrics: ExecutionMetrics | null;
   thresholdBreaches: number;
   checksPassed: number;

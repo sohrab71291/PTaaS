@@ -36,6 +36,22 @@ async function queryFromRequestsRaw(startedAt, finishedAt) {
     const start = new Date(startedAt.getTime() - 10000).toISOString();
     const stop = new Date((finishedAt ?? new Date()).getTime() + 60000).toISOString();
     // ── 1. All responseTime data points (same filter as Grafana panel-125 / panel-138) ──
+    // Keep "result" in the output (not filtered here) — request counts and per-endpoint
+    // Count must include failures, matching Grafana's "Request Count" / "Metrics Overview"
+    // Count column. Percentile/avg/RPS calcs below filter to result=="pass" in JS, matching
+    // the dashboard's "Avg Response time" / "Metrics Overview" percentile panels, which do
+    // filter result == "pass" — so latency stats stay in sync even when a run has failures.
+    // NOTE: rename the "result" tag to "reqResult" — Flux's CSV output already has a
+    // reserved annotation column literally named "result" (the query result-set name,
+    // always "_result"), so keeping our own "result" tag verbatim collides with it and
+    // the client library reads the wrong column. Renaming avoids the collision.
+    // recordCustomMetrics() (k6InfluxTemplate.ts/k6PromptBlocks.ts) writes TWO
+    // requestsRaw lines per actual HTTP request — identical data, one tagged
+    // samplerType=request and one samplerType=transaction (Grafana's dashboard
+    // groups by one or the other depending on panel). Without filtering to a
+    // single samplerType here, every point gets counted twice — a script that
+    // made 2 real calls to an endpoint reports Count: 4. Scope to "request" so
+    // each actual HTTP call is counted exactly once.
     const rtFlux = `
     from(bucket: "${bucket}")
       |> range(start: ${start}, stop: ${stop})
@@ -43,7 +59,9 @@ async function queryFromRequestsRaw(startedAt, finishedAt) {
       |> filter(fn: (r) => r._field == "responseTime")
       |> filter(fn: (r) => r["runId"] == "${runId}")
       |> filter(fn: (r) => r["requestName"] !~ /#/)
-      |> keep(columns: ["_time", "_value", "requestName"])
+      |> filter(fn: (r) => r["samplerType"] == "request")
+      |> rename(columns: {"result": "reqResult"})
+      |> keep(columns: ["_time", "_value", "requestName", "reqResult"])
   `;
     // ── 2. Error counts per requestName (same filter as Grafana panel-132) ──────
     const errFlux = `
@@ -53,6 +71,7 @@ async function queryFromRequestsRaw(startedAt, finishedAt) {
       |> filter(fn: (r) => r._field == "errorCount")
       |> filter(fn: (r) => r["runId"] == "${runId}")
       |> filter(fn: (r) => r["requestName"] !~ /#/)
+      |> filter(fn: (r) => r["samplerType"] == "request")
       |> group(columns: ["requestName"])
       |> sum()
       |> keep(columns: ["requestName", "_value"])
@@ -81,7 +100,7 @@ async function queryFromRequestsRaw(startedAt, finishedAt) {
     let maxVUs = 0;
     try {
         [rtRows, errRows] = await Promise.all([
-            queryApi.collectRows(rtFlux, (v, m) => ({ _time: m.get(v, '_time'), _value: parseFloat(m.get(v, '_value')) || 0, requestName: m.get(v, 'requestName') })),
+            queryApi.collectRows(rtFlux, (v, m) => ({ _time: m.get(v, '_time'), _value: parseFloat(m.get(v, '_value')) || 0, requestName: m.get(v, 'requestName'), reqResult: m.get(v, 'reqResult') })),
             queryApi.collectRows(errFlux, (v, m) => ({ requestName: m.get(v, 'requestName'), _value: parseFloat(m.get(v, '_value')) || 0 })),
         ]);
         const vuRows = await queryApi.collectRows(vuFlux, (v, m) => ({ _value: parseFloat(m.get(v, '_value')) || 0 }));
@@ -93,17 +112,29 @@ async function queryFromRequestsRaw(startedAt, finishedAt) {
     }
     if (rtRows.length === 0)
         return null;
+    // Pass-only subset — Grafana's percentile/avg-latency panels ("Avg Response time",
+    // "Metrics Overview" 90%/95%/Avg columns) filter result == "pass", excluding failed
+    // requests from latency stats. Counts (Request Count, per-endpoint Count column,
+    // Overall Throughput/RPS) do NOT filter by result, so those stay on the full rtRows set.
+    const passRows = rtRows.filter(r => r.reqResult === 'pass');
     // ── 4. Group by requestName ──────────────────────────────────────────────────
-    const endpointRTs = new Map();
+    const endpointCounts = new Map(); // all rows, per endpoint (Count column)
+    const endpointPassRTs = new Map(); // pass-only rows, per endpoint (latency)
     const timeBuckets = new Map();
-    const allRTs = [];
+    const allRTs = []; // all rows — requestCount
+    const passRTs = []; // pass-only — overall p50/p90/p95/p99
     for (const row of rtRows) {
-        const ms = row._value; // requestsRaw stores ms directly
-        allRTs.push(ms);
+        allRTs.push(row._value);
         const ep = row.requestName ?? 'unknown';
-        if (!endpointRTs.has(ep))
-            endpointRTs.set(ep, []);
-        endpointRTs.get(ep).push(ms);
+        endpointCounts.set(ep, (endpointCounts.get(ep) ?? 0) + 1);
+    }
+    for (const row of passRows) {
+        const ms = row._value; // requestsRaw stores ms directly
+        passRTs.push(ms);
+        const ep = row.requestName ?? 'unknown';
+        if (!endpointPassRTs.has(ep))
+            endpointPassRTs.set(ep, []);
+        endpointPassRTs.get(ep).push(ms);
         const t = new Date(row._time).getTime();
         const bucket10s = Math.floor(t / 10000) * 10000;
         if (!timeBuckets.has(bucket10s))
@@ -111,23 +142,24 @@ async function queryFromRequestsRaw(startedAt, finishedAt) {
         timeBuckets.get(bucket10s).push(ms);
     }
     allRTs.sort((a, b) => a - b);
+    passRTs.sort((a, b) => a - b);
     // error counts per endpoint
     const errMap = new Map();
     for (const r of errRows)
         errMap.set(r.requestName, r._value);
     const totalErrors = Array.from(errMap.values()).reduce((s, v) => s + v, 0);
     // ── 5. Per-endpoint metrics (Grafana "Metrics Overview" table) ───────────────
-    const endpoints = Array.from(endpointRTs.entries())
-        .map(([name, vals]) => {
-        vals.sort((a, b) => a - b);
+    const endpoints = Array.from(endpointCounts.entries())
+        .map(([name, count]) => {
+        const passVals = (endpointPassRTs.get(name) ?? []).slice().sort((a, b) => a - b);
         const errCnt = errMap.get(name) ?? 0;
         return {
             requestName: name,
-            count: vals.length,
-            avg: Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 10) / 10,
-            p90: percentile(vals, 0.90),
-            p95: percentile(vals, 0.95),
-            errorRate: vals.length > 0 ? errCnt / vals.length : 0,
+            count,
+            avg: passVals.length > 0 ? Math.round((passVals.reduce((s, v) => s + v, 0) / passVals.length) * 10) / 10 : 0,
+            p90: percentile(passVals, 0.90),
+            p95: percentile(passVals, 0.95),
+            errorRate: count > 0 ? errCnt / count : 0,
             errorCount: errCnt,
         };
     })
@@ -158,13 +190,18 @@ async function queryFromRequestsRaw(startedAt, finishedAt) {
     //   aggregateWindow(every: 30s, fn: mean|count, createEmpty: false) → calcs: ["mean"]
     // Using simple total/span gives higher RPS because the final partial window
     // still has the full 30s as its denominator in Grafana, pulling the mean down.
-    const win30rt = new Map(); // key → [responseTime ms]
-    const win30cnt = new Map(); // key → count
-    for (let i = 0; i < rtRows.length; i++) {
-        const key = Math.floor(rtTimes[i] / 30000) * 30000;
+    // Avg RT windows are built from pass-only rows (Grafana's Avg Response time panel
+    // filters result == "pass"); RPS windows use all rows (Overall Throughput does not).
+    const win30rt = new Map(); // key → [responseTime ms], pass-only
+    const win30cnt = new Map(); // key → count, all rows
+    for (const row of passRows) {
+        const key = Math.floor(new Date(row._time).getTime() / 30000) * 30000;
         if (!win30rt.has(key))
             win30rt.set(key, []);
-        win30rt.get(key).push(rtRows[i]._value);
+        win30rt.get(key).push(row._value);
+    }
+    for (let i = 0; i < rtRows.length; i++) {
+        const key = Math.floor(rtTimes[i] / 30000) * 30000;
         win30cnt.set(key, (win30cnt.get(key) ?? 0) + 1);
     }
     const windowMeans = Array.from(win30rt.values()).map(vals => vals.reduce((s, v) => s + v, 0) / vals.length);
@@ -184,10 +221,10 @@ async function queryFromRequestsRaw(startedAt, finishedAt) {
         avgResponseTime,
         rps,
         duration: dataDurationMs,
-        p50: percentile(allRTs, 0.50),
-        p90: percentile(allRTs, 0.90),
-        p95: percentile(allRTs, 0.95),
-        p99: percentile(allRTs, 0.99),
+        p50: percentile(passRTs, 0.50),
+        p90: percentile(passRTs, 0.90),
+        p95: percentile(passRTs, 0.95),
+        p99: percentile(passRTs, 0.99),
         maxVUs,
         endpoints,
         timeSeries,
@@ -397,9 +434,13 @@ async function pushExecutionMetrics(execution) {
     const metrics = execution.metrics ?? {};
     const thresholds = execution.thresholdResults ?? [];
     const finishedAt = execution.finishedAt ? new Date(execution.finishedAt) : new Date();
+    // Same runId jobDispatcher tags requestsRaw/virtualUsers with — lets the
+    // dashboard's existing $runId/$runId_Baseline variables filter k6_execution too.
+    const runId = execution.startedAt ? `PerfOps-${new Date(execution.startedAt).getTime()}` : '';
     // ── Measurement: k6_execution ────────────────────────────────────────────────
     const execPoint = new influxdb_client_1.Point('k6_execution')
         .tag('execution_id', String(execution.id ?? ''))
+        .tag('runId', runId)
         .tag('spec_id', String(execution.specId ?? ''))
         .tag('spec_name', String(execution.specName ?? ''))
         .tag('environment', String(execution.environment ?? ''))

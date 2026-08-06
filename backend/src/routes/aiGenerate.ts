@@ -130,13 +130,13 @@ function describeSpecContext(ctx: SpecContext | null): string {
 
   const checks = (ctx.checks ?? []).filter(c => c && c.trim());
   if (checks.length) {
-    lines.push(`- MANDATORY checks (every request must include check() assertions covering these): ${checks.join(' | ')}`);
+    lines.push(`- MANDATORY checks (every request must include check() assertions covering these — VALIDATIONS ONLY per rule 8(b): a failing one is a console.warn() WARNING, never an error, and never gates pass/fail): ${checks.join(' | ')}`);
   }
 
   const thresholdEntries = Object.entries(ctx.thresholds ?? {});
   if (thresholdEntries.length) {
     const rendered = thresholdEntries.map(([metric, conds]) => `${metric}: ${conds.map(c => c.condition).join(', ')}`).join(' | ');
-    lines.push(`- MANDATORY thresholds (use these exact conditions in options.thresholds instead of the defaults in rule 11): ${rendered}`);
+    lines.push(`- MANDATORY thresholds (SLA/SLO — the pass/fail gate for the run per rule 11; use these exact conditions in options.thresholds instead of the defaults in rule 11 — still apply rule 11's {endpoint_type:app} key scope when the metric is http_req_duration or http_req_failed, e.g. condition "rate<0.01" on "http_req_failed" becomes 'http_req_failed{endpoint_type:app}': ['rate<0.01']; never scope 'checks' or a custom metric, and never add a 'checks' threshold): ${rendered}`);
   }
 
   if (ctx.slos?.length) {
@@ -171,10 +171,10 @@ MANDATORY RULES — every rule must be followed exactly:
 5. All secrets and tokens use __ENV.VAR_NAME — never hardcoded values.
 6. Every HTTP request is wrapped in a named group().
 7. Every endpoint has its own Trend metric (e.g. loginTrend, createOrderTrend).
-8. Every request has check() for status code AND response time.
+8. PASS/FAIL POLICY — MANDATORY: (a) EVERY 4xx/5xx response status is ALWAYS a real failure, unconditionally — no per-endpoint or per-status tolerance. Do NOT set a responseCallback param on any request; leave it unset so k6's own default (status >= 400 = failed) applies. Do NOT write a custom responseCallback function — it is not a supported value in this k6 build and fails every request outright with "unsupported responseCallback" (status 0, connection never attempted). (b) Every request still has check() for status code AND response time (using isResponseStatusExpected() from the InfluxDB block below for the status label) — these are informational Validations only (see Section D "Checks" in the test case data, when present) and must NEVER be wired into a responseCallback or otherwise change whether a response counts as a failure. A failing check must be logged via console.warn() (a WARNING), never console.error() — console.error() is reserved for the unconditional 4xx/5xx failure log required by (a).
 9. Include sleep(1) between logical steps within an iteration.
 10. Declare 'export const options = { scenarios: {...}, thresholds: {...} };' EXACTLY ONCE, using 'const' (never 'let'/'var') — a script with more than one export named 'options' fails to load entirely with "Duplicate export name 'options'" before any request runs. Use options.scenarios with ramping-vus executor and explicit exec function names, and put thresholds in that SAME object literal — never a second options block later.
-11. Set thresholds from test case data or sensible defaults (p(95)<800, rate<0.05).
+11. options.thresholds is the SLA/SLO pass/fail gate for the WHOLE RUN — breaching one fails the test. Set thresholds from test case data or sensible defaults: 'http_req_duration{endpoint_type:app}': ['p(95)<800'], 'http_req_failed{endpoint_type:app}': ['rate<0.05']. The {endpoint_type:app} tag scope on http_req_duration/http_req_failed is MANDATORY (never on 'checks' or a custom Trend/Counter metric) — every request under test must include endpoint_type: 'app' in its own tags object (alongside whatever other tags rule 6/7 already require), while the InfluxDB write/precheck calls in the InfluxDB block below are deliberately left without that tag. This scoping keeps InfluxDB's own HTTP traffic (writes, bucket/org lookups) from ever counting toward the test's pass/fail thresholds or error rate — an InfluxDB hiccup must never fail the test on its own. If test case data specifies its own threshold condition for http_req_duration or http_req_failed, keep the condition exactly as given but still apply the {endpoint_type:app} key scope. Do NOT add a 'checks' entry to options.thresholds — checks are validations only (rule 8(b)) and must never gate pass/fail.
 12. SCENARIO_MAX_VUS must be computed with Math.max and ?? (not ||): const SCENARIO_MAX_VUS = Math.max(...Object.values(options.scenarios).flatMap(s => (s.stages||[]).map(st => st.target ?? 0)), 1);
 13. Auth tokens: extract defensively — const token = (body.token ?? body.sessionToken ?? body.access_token ?? (body.data && body.data.token) ?? '');
 14. All test data that must be unique per VU/iteration (names, emails, usernames) must embed __VU and __ITER: e.g. 'user_' + __VU + '_' + __ITER + '@example.com'.

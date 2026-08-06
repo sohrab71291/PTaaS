@@ -83,6 +83,13 @@ export async function queryFromRequestsRaw(
   // reserved annotation column literally named "result" (the query result-set name,
   // always "_result"), so keeping our own "result" tag verbatim collides with it and
   // the client library reads the wrong column. Renaming avoids the collision.
+  // recordCustomMetrics() (k6InfluxTemplate.ts/k6PromptBlocks.ts) writes TWO
+  // requestsRaw lines per actual HTTP request — identical data, one tagged
+  // samplerType=request and one samplerType=transaction (Grafana's dashboard
+  // groups by one or the other depending on panel). Without filtering to a
+  // single samplerType here, every point gets counted twice — a script that
+  // made 2 real calls to an endpoint reports Count: 4. Scope to "request" so
+  // each actual HTTP call is counted exactly once.
   const rtFlux = `
     from(bucket: "${bucket}")
       |> range(start: ${start}, stop: ${stop})
@@ -90,6 +97,7 @@ export async function queryFromRequestsRaw(
       |> filter(fn: (r) => r._field == "responseTime")
       |> filter(fn: (r) => r["runId"] == "${runId}")
       |> filter(fn: (r) => r["requestName"] !~ /#/)
+      |> filter(fn: (r) => r["samplerType"] == "request")
       |> rename(columns: {"result": "reqResult"})
       |> keep(columns: ["_time", "_value", "requestName", "reqResult"])
   `;
@@ -102,6 +110,7 @@ export async function queryFromRequestsRaw(
       |> filter(fn: (r) => r._field == "errorCount")
       |> filter(fn: (r) => r["runId"] == "${runId}")
       |> filter(fn: (r) => r["requestName"] !~ /#/)
+      |> filter(fn: (r) => r["samplerType"] == "request")
       |> group(columns: ["requestName"])
       |> sum()
       |> keep(columns: ["requestName", "_value"])
