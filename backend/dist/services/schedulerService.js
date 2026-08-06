@@ -117,32 +117,43 @@ async function runSchedule(schedule) {
         profileType: spec.loadProfile?.type || 'staged',
         stages: spec.loadProfile?.stages || [],
     };
-    // Scripts are always pulled fresh from the configured repo at run time —
-    // never from the TestSpec's locally stored generatedScript — so a schedule
-    // always executes whatever is currently committed. Uses the schedule's own
-    // repo override if set (githubRepoUrl/branch/scriptPath/token, or the
-    // GitLab equivalents), otherwise falls back to the GITHUB_*/GITLAB_* env vars.
+    // When "Fetch script from repo on each run" is enabled, the script is
+    // pulled fresh from the configured repo at run time instead of the
+    // TestSpec's locally stored generatedScript, so the schedule always
+    // executes whatever is currently committed. Uses the schedule's own repo
+    // override if set (githubRepoUrl/branch/scriptPath/token, or the GitLab
+    // equivalents), otherwise falls back to the GITHUB_*/GITLAB_* env vars.
+    // When disabled, use the TestSpec's own generatedScript directly — this
+    // was previously ignored entirely (the fetch always ran regardless of the
+    // toggle), so a schedule with the toggle left off — the default — failed
+    // outright unless the server happened to have GITHUB_TOKEN/OWNER/REPO env
+    // vars configured as a silent fallback.
     // Fetch + dispatch happens off the scheduler's critical path — the cron
     // tick (and any triggerNow HTTP request) returns as soon as the Execution
     // row is queued, without waiting on the repo round-trip.
     const useGitlab = schedule.scmProvider === 'gitlab';
-    const fetchPromise = useGitlab
-        ? (0, gitlabService_1.fetchScript)(spec.name, {
-            repoUrl: schedule.gitlabRepoUrl,
-            branch: schedule.gitlabBranch,
-            scriptPath: schedule.gitlabScriptPath,
-            token: schedule.gitlabToken,
-        })
-        : (0, githubService_1.fetchScript)(spec.name, {
-            repoUrl: schedule.githubRepoUrl,
-            branch: schedule.githubBranch,
-            scriptPath: schedule.githubScriptPath,
-            token: schedule.githubToken,
-        });
-    fetchPromise
+    const fetchFromRepo = schedule.fetchFromGithub === true;
+    const scriptPromise = fetchFromRepo
+        ? (useGitlab
+            ? (0, gitlabService_1.fetchScript)(spec.name, {
+                repoUrl: schedule.gitlabRepoUrl,
+                branch: schedule.gitlabBranch,
+                scriptPath: schedule.gitlabScriptPath,
+                token: schedule.gitlabToken,
+            })
+            : (0, githubService_1.fetchScript)(spec.name, {
+                repoUrl: schedule.githubRepoUrl,
+                branch: schedule.githubBranch,
+                scriptPath: schedule.githubScriptPath,
+                token: schedule.githubToken,
+            }))
+        : spec.generatedScript
+            ? Promise.resolve(spec.generatedScript)
+            : Promise.reject(new Error(`Test spec "${spec.name}" has no generated script — author/generate a script for it, or enable "Fetch script from repo on each run" on this schedule.`));
+    scriptPromise
         .then(script => (0, jobDispatcher_1.dispatchJob)(execution.id, script, dispatchConfig))
         .catch(async (err) => {
-        console.warn(`[Scheduler] ${useGitlab ? 'GitLab' : 'GitHub'} fetch/dispatch failed for schedule ${schedule.id}: ${err.message}`);
+        console.warn(`[Scheduler] ${fetchFromRepo ? (useGitlab ? 'GitLab' : 'GitHub') : 'local'} fetch/dispatch failed for schedule ${schedule.id}: ${err.message}`);
         await prisma_1.default.execution.update({ where: { id: execution.id }, data: { status: 'fail', errorMessage: err.message } });
     });
     await prisma_1.default.schedule.update({
