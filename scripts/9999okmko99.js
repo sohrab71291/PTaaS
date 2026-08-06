@@ -7,6 +7,8 @@ const CAPTURED_REQUESTS = [{"name":"GET _apps_ArcherApp_ArcherApp_aspx","method"
 
 
 
+
+
 const TEST_ID = __ENV.TESTID || ('local-' + Date.now());
 const RUN_ID = __ENV.RUN_ID || ('PerfOps-' + Date.now());
 const NODE_NAME = __ENV.NODE_NAME || 'PerfOps';
@@ -49,9 +51,9 @@ export const options = {
     },
   },
   thresholds: {
-    'http_req_duration{endpoint_type:app}': ['p(95)<1000'],
-    'http_req_failed{endpoint_type:app}': ['rate<0.5'],
-    'checks': ['rate>0.9'],
+    'http_req_duration{endpoint_type:app}': ['p(95)<2000'],
+    'http_req_failed{endpoint_type:app}': ['rate<0.05'],
+    'checks': ['rate>0.95'],
   },
 };
 
