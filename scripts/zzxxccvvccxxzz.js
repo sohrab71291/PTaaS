@@ -1,5 +1,5 @@
 import http from 'k6/http';
-import { check, group, sleep } from 'k6';
+import { check, group, sleep, fail } from 'k6';
 import { Counter, Trend, Gauge } from 'k6/metrics';
 import { textSummary } from 'https://jslib.k6.io/k6-summary/0.0.1/index.js';
 const LOGIN_REQUEST = null;
