@@ -8,7 +8,7 @@ const CAPTURED_REQUESTS = [{"name":"POST _api_internal_Permission_GetModuleRecor
 const TEST_ID = __ENV.TESTID || ('local-' + Date.now());
 const RUN_ID = __ENV.RUN_ID || ('PerfOps-' + Date.now());
 const NODE_NAME = __ENV.NODE_NAME || 'PerfOps';
-const TEST_NAME = __ENV.TEST_NAME || 'Archer Classic Captured Session Replay';
+const TEST_NAME = __ENV.TEST_NAME || 'Archer Classic Session Replay';
 const BASE_URL = __ENV.BASE_URL || 'https://9185004.classic-dev.internal.archerirm.net';
 const INFLUX_V2_URL = __ENV.INFLUX_V2_URL || 'http://localhost:8086';
 const INFLUX_V2_ORG = __ENV.INFLUX_V2_ORG || '';
@@ -18,9 +18,9 @@ const INFLUX_V2_TOKEN = __ENV.INFLUX_V2_TOKEN || '';
 const INFLUX_V2_AUTO_CREATE_BUCKET = (__ENV.INFLUX_V2_AUTO_CREATE_BUCKET || 'false').toLowerCase() === 'true';
 const INFLUX_V2_ENABLED = !!(INFLUX_V2_ORG && INFLUX_V2_BUCKET && INFLUX_V2_TOKEN);
 
-const SCENARIO_NAME = 'sessionReplay';
+const SCENARIO_NAME = 'session_replay';
 
-const CREDENTIALS = [{"loginUrl":"https://9185004.classic-dev.internal.archerirm.net/api/core/security/login","username":"Nitesh","password":"Password123$","instanceName":"9185004"}];
+const CREDENTIALS = [{"loginUrl":"https://9185004.classic-dev.internal.archerirm.net/api/core/security/login","username":"Sohrab","password":"Password123$","instanceName":"9185004"}];
 // Each entry has the shape: { loginUrl, username, password, instanceName } —
 // these come verbatim from the uploaded CSV's URL / Username / Password /
 // InstanceName columns. InstanceName is REQUIRED by the login API (Archer IRM
@@ -38,7 +38,7 @@ const k6DataReceivedBytesTotal = new Counter('k6_data_received_bytes_total');
 
 export const options = {
   scenarios: {
-    sessionReplay: {
+    session_replay: {
       executor: 'ramping-vus',
       exec: 'sessionReplay',
       startVUs: 0,
@@ -443,8 +443,6 @@ export function sessionReplay(setupData) {
     'k6_vus,testid=' + escapeTagValue(TEST_ID) + ',scenario=' + escapeTagValue(SCENARIO_NAME) + ',vu=' + escapeTagValue(__VU) + ' value=1 ' + _ts,
     'virtualUsers,' + buildInfluxTagSet({ runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, scenario: SCENARIO_NAME }) + ' meanActiveThreads=1,finishedThreads=' + __ITER + ' ' + _ts,
   ]);
-
-  ensureAuth();
 
   const replayRequests = CAPTURED_REQUESTS;
 
