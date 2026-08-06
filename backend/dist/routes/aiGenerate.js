@@ -159,7 +159,7 @@ ${describeLoadProfile(loadProfile)}${describeEnvVarKeys(envVarKeys)}${describeBa
 
 MANDATORY RULES — every rule must be followed exactly:
 1. Output ONLY valid JavaScript — no markdown, no code fences, no explanation text.
-2. Start with imports, end with handleSummary export.
+2. Start with imports, end with handleSummary export. Import fail from 'k6' (e.g. import { check, group, sleep, fail } from 'k6';) whenever the script uses fail() — the AUTHENTICATION PATTERN below (both the generic and CSV-based variants) calls fail() when a login/session is missing or a login request fails, and omitting the import crashes the ENTIRE script with "fail is not defined" the moment that path is hit, aborting every VU instead of failing just that one login attempt.
 3. Include the full InfluxDB v2 integration block shown below, word for word.
 4. Use __ENV.BASE_URL for all request base URLs, defaulting to ${baseUrl ? `'${baseUrl}' (see MANDATORY BASE_URL above — this came from the uploaded test case data, do NOT use localhost)` : `'http://localhost:3000'`}.
 5. All secrets and tokens use __ENV.VAR_NAME — never hardcoded values.

@@ -217,6 +217,10 @@ function buildGenericAuthPatternBlock() {
 AUTHENTICATION PATTERN — MANDATORY whenever the test cases involve a login/auth
 step. Login ONCE in setup(), not per-VU/per-iteration, to avoid concurrent-login
 failures (e.g. rate limits, session collisions) when many VUs ramp up in parallel.
+This pattern calls fail() below — 'fail' MUST be in the top-level k6 import
+(import { check, group, sleep, fail } from 'k6';), NOT just check/group/sleep.
+Omitting it crashes the ENTIRE script with "fail is not defined" the instant
+a login attempt fails, aborting every VU instead of just that one attempt.
 ════════════════════════════════════════════════════════════════
 
 Merge this into the setup() shown above (do not write a second setup()) — after
@@ -405,6 +409,11 @@ AUTHENTICATION PATTERN — CSV-BASED PER-VU CREDENTIALS. MANDATORY when the user
 has opted into CSV-based login credentials. Do NOT write a generic single
 shared setup() login for this mode — every VU logs in with its own
 username/password drawn from a credential pool uploaded on the Executor page.
+This pattern calls fail() below — 'fail' MUST be in the top-level k6 import
+(import { check, group, sleep, fail } from 'k6';), NOT just check/group/sleep.
+Omitting it crashes the ENTIRE script with "fail is not defined" the instant
+a VU has no credentials or its login fails, aborting every VU instead of just
+that one VU.
 ════════════════════════════════════════════════════════════════
 
 Declare this CREDENTIALS placeholder right after the InfluxDB block's env vars
