@@ -63,7 +63,7 @@ class K6Executor {
         const env = {
             ...process.env,
             PATH: `${process.env.HOME}/bin:${process.env.PATH}:/usr/local/bin:/opt/homebrew/bin`,
-            BASE_URL: config.baseUrl || 'http://localhost:3000',
+            ...(config.baseUrl ? { BASE_URL: config.baseUrl } : {}),
             ...config.envVars,
         };
         // Resolve k6 binary — check common paths

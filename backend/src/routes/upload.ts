@@ -17,9 +17,12 @@ const uploadTestCases = multer({
   },
 });
 
+// See harGenerate.ts's upload config for why this sits at 150MB, not 200MB —
+// the jsonb column the file's base64 ultimately lands in caps a single string
+// at ~256MB, and 200MB raw already exceeded that once encoded.
 const uploadHar = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 200 * 1024 * 1024 },
+  limits: { fileSize: 150 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = '.' + file.originalname.split('.').pop()?.toLowerCase();
     if (['.har', '.json'].includes(ext)) cb(null, true);

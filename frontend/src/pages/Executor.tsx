@@ -77,18 +77,12 @@ export const Executor: React.FC = () => {
   const [constantDuration, setConstantDuration] = useState('1m');
   const [envVars, setEnvVars] = useState<EnvVar[]>([]);
 
-  // Agent auto-fix & retry: on failure, the backend asks Claude to diagnose
-  // and rewrite the script, then re-runs it — repeating until it succeeds or
-  // maxAttempts total runs is reached.
-  const [autoFix, setAutoFix] = useState(true);
-  const [autoFixMaxAttemptsInput, setAutoFixMaxAttemptsInput] = useState(3);
-
   // Execution state lives in ExecutionContext (above the router) so an in-progress
   // run survives navigating away from this page — see ExecutionStatusPopup.
   const {
     status, executionId, liveMetrics, systemMetrics, consoleLines, summary,
     k6NotFound, sloResults, startExecution, stopExecution,
-    autoFixAttempt, autoFixMaxAttempts, autoFixedScript,
+    autoFixAttempt, autoFixMaxAttempts,
   } = useExecution();
 
   const consoleBoxRef = useRef<HTMLDivElement>(null);
@@ -125,6 +119,42 @@ export const Executor: React.FC = () => {
     }
   }, []);
 
+  // Scripts for saved test suites are no longer trusted from local/session
+  // storage — the repo is the source of truth. Once we know which suite this
+  // is, pull the current committed script and use that for both display and
+  // execution (the backend re-fetches it again itself right before running,
+  // this is just so the editor isn't showing something stale/misleading).
+  const [repoScriptStatus, setRepoScriptStatus] = useState<'idle' | 'loading' | 'error'>('idle');
+  const [repoScriptError, setRepoScriptError] = useState('');
+
+  useEffect(() => {
+    if (!specId) return;
+    let cancelled = false;
+    setRepoScriptStatus('loading');
+    setRepoScriptError('');
+    const token = localStorage.getItem('auth_token');
+    fetch(`/api/test-specs/${specId}/repo-script`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(async r => {
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'Failed to fetch script from repo');
+        return data.script as string;
+      })
+      .then(script => {
+        if (cancelled) return;
+        setAuthoringScript(script);
+        setScriptSource('authoring');
+        setRepoScriptStatus('idle');
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setRepoScriptError(err.message);
+        setRepoScriptStatus('error');
+      });
+    return () => { cancelled = true; };
+  }, [specId]);
+
   // Scroll only the console box's own scrollTop — never scrollIntoView(), which
   // can walk up and scroll ancestor scrollables (the whole page) and yank the
   // user's scroll position back here on every new line during a running execution.
@@ -159,11 +189,30 @@ export const Executor: React.FC = () => {
     await startExecution({
       script, profileType, stages, constantVus, constantDuration,
       envVars: envObj, testName, slos, specId,
-      autoFix, maxAttempts: autoFixMaxAttemptsInput,
     });
   };
 
   const handleStop = stopExecution;
+
+  // Kicks off the same run again, but with the backend's auto-fix loop
+  // enabled: on failure it diagnoses the console/threshold/check output with
+  // Claude, rewrites the script, and re-executes — repeating (up to
+  // maxAttempts) until the script passes or attempts run out. On a passing
+  // fix the backend autosaves the rewritten script to this spec and pushes
+  // it to GitHub/GitLab (see index.ts job_complete handler).
+  const handleFixAndRerun = async () => {
+    const script = getActiveScript();
+    if (!script.trim()) return;
+
+    const envObj: Record<string, string> = {};
+    envVars.filter(e => e.key.trim()).forEach(e => { envObj[e.key] = e.value; });
+
+    await startExecution({
+      script, profileType, stages, constantVus, constantDuration,
+      envVars: envObj, testName, slos, specId,
+      autoFix: true, maxAttempts: 3,
+    });
+  };
 
   // Sync executor's load-profile settings back to the test spec after a run
   // finishes (purely local convenience — unrelated to global execution tracking).
@@ -192,33 +241,6 @@ export const Executor: React.FC = () => {
         .catch(() => {});
     }
   }, [status, executionId]);
-
-  // When the backend's auto-fix diagnoses and rewrites a failing script mid-run,
-  // reflect that rewritten script everywhere the original one lived — the local
-  // editor state (whichever source produced it), sessionStorage (so a refresh of
-  // this page doesn't lose it), and the test suite's saved spec (so future runs
-  // from Test Authoring pick up the fix instead of the stale, broken script).
-  useEffect(() => {
-    if (!autoFixedScript) return;
-    if (scriptSource === 'authoring') setAuthoringScript(autoFixedScript);
-    else if (scriptSource === 'upload') setUploadedScript(autoFixedScript);
-    else setPastedScript(autoFixedScript);
-    sessionStorage.setItem('generatedK6Script', autoFixedScript);
-
-    if (specId) {
-      const token = localStorage.getItem('auth_token');
-      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-      fetch(`/api/test-specs/${specId}`, { headers })
-        .then(r => r.json())
-        .then(currentSpec => fetch(`/api/test-specs/${specId}`, {
-          method: 'PUT',
-          headers: { ...headers, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...currentSpec, generatedScript: autoFixedScript }),
-        }))
-        .catch(() => {});
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoFixedScript]);
 
   const onDrop = useCallback((files: File[]) => {
     const f = files[0];
@@ -464,32 +486,7 @@ export const Executor: React.FC = () => {
             {statusCfg.icon}
             {statusCfg.label}
             {liveMetrics.progress > 0 && isExecuting && <span className="ml-1 opacity-80">{liveMetrics.progress}%</span>}
-            {isExecuting && autoFixMaxAttempts > 1 && (
-              <span className="ml-1 opacity-80">· auto-fix attempt {autoFixAttempt}/{autoFixMaxAttempts}</span>
-            )}
           </div>
-          <label className="flex items-center gap-1.5 text-xs text-gray-600 select-none" title="On failure, ask Claude to diagnose and rewrite the script, then re-run — repeating until it passes or the attempt limit is reached.">
-            <input
-              type="checkbox"
-              checked={autoFix}
-              disabled={isExecuting}
-              onChange={e => setAutoFix(e.target.checked)}
-              className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
-            />
-            Auto-fix &amp; retry
-            {autoFix && (
-              <input
-                type="number"
-                min={2}
-                max={5}
-                value={autoFixMaxAttemptsInput}
-                disabled={isExecuting}
-                onChange={e => setAutoFixMaxAttemptsInput(Math.min(Math.max(parseInt(e.target.value, 10) || 3, 2), 5))}
-                className="w-12 px-1.5 py-0.5 border border-gray-300 rounded text-xs text-gray-900"
-                title="Max attempts"
-              />
-            )}
-          </label>
           <button type="button" onClick={handleExecute} disabled={isExecuting || !getActiveScript().trim()}
             title={!getActiveScript().trim() ? 'Load a script before executing' : undefined}
             className="flex items-center justify-center gap-2 px-4 py-2 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-semibold text-white transition-colors shadow-sm">
@@ -531,10 +528,18 @@ export const Executor: React.FC = () => {
           </div>
 
           {scriptSource === 'authoring' && (
-            authoringScript ? (
+            repoScriptStatus === 'loading' ? (
+              <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-xs text-gray-600">
+                <Loader2 size={12} className="animate-spin" /> Pulling latest script from repo…
+              </div>
+            ) : repoScriptStatus === 'error' ? (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-1.5 text-xs text-red-700">
+                Could not fetch script from repo: {repoScriptError}
+              </div>
+            ) : authoringScript ? (
               <div className="flex items-center gap-2">
                 <span className="bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 text-xs text-green-700">
-                  ✓ Script loaded ({authoringScript.split('\n').length} lines)
+                  ✓ {specId ? 'Latest from repo' : 'Script loaded'} ({authoringScript.split('\n').length} lines)
                 </span>
                 {generatedScriptMeta && (
                   <span className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-1.5 text-xs text-purple-700">
@@ -774,6 +779,25 @@ export const Executor: React.FC = () => {
               {troubleshootAnswer || 'Thinking…'}
             </div>
           )}
+
+          {status === 'error' || status === 'complete' ? (
+            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between gap-3">
+              <span className="text-xs text-gray-500">
+                {isExecuting
+                  ? `Auto-fix attempt ${autoFixAttempt}/${autoFixMaxAttempts} — rewriting and re-running the script until it passes…`
+                  : 'Let Claude rewrite the script to fix this failure, then re-run it automatically. A passing fix is autosaved to this suite and pushed to GitHub/GitLab.'}
+              </span>
+              <button
+                type="button"
+                onClick={handleFixAndRerun}
+                disabled={isExecuting}
+                className="flex items-center gap-2 px-4 py-2 shrink-0 bg-gray-900 hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-semibold text-white transition-colors shadow-sm"
+              >
+                {isExecuting ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {isExecuting ? `Fixing (${autoFixAttempt}/${autoFixMaxAttempts})…` : 'Fix & Re-run with AI'}
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

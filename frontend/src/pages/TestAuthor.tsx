@@ -1225,6 +1225,7 @@ export const TestAuthor: React.FC = () => {
             <HarToScriptPanel
               embedded
               loadProfile={{ profileType, stages, constantVus, constantDuration }}
+              validationConfig={{ checks: spec.checks, thresholds: spec.thresholds }}
               disabled={!spec.name.trim() || !credentialBatchId}
               disabledReason={
                 !spec.name.trim()

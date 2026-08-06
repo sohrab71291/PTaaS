@@ -268,6 +268,10 @@ export function ExecutionProvider({ children }: { children: React.ReactNode }) {
       }
       if (params.testName.trim()) body.append('testName', params.testName.trim());
       if (params.slos.length)     body.append('slos', JSON.stringify(params.slos));
+      // When running a saved test suite, the backend re-fetches the script
+      // from the configured repo and ignores whatever was submitted here —
+      // this is just so it knows which suite to pull.
+      if (params.specId) body.append('specId', params.specId);
       if (params.credentialBatchId) body.append('credentialBatchId', params.credentialBatchId);
       if (params.autoFix) {
         body.append('autoFix', 'true');

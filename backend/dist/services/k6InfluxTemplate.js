@@ -147,11 +147,27 @@ function ensureInfluxBucket() {
     throw new Error('Failed to create bucket "' + INFLUX_V2_BUCKET + '". HTTP ' + cr.status);
   }
 }
+// Buffered, not flushed on every call — each request under test previously
+// triggered its own blocking http.post() to InfluxDB, doubling the VU's HTTP
+// traffic and serializing iteration speed on InfluxDB's response time. Lines
+// are now batched per-VU and flushed every INFLUX_FLUSH_THRESHOLD lines (~3-4
+// requests' worth), cutting blocking writes ~3-4x while keeping near-real-time
+// granularity. flushInfluxLines() forces a flush (called from teardown so the
+// last partial batch isn't dropped).
+let __influxBuffer = [];
+const INFLUX_FLUSH_THRESHOLD = 25;
 function writeInfluxLines(lines) {
   if (!INFLUX_V2_ENABLED || lines.length === 0) return;
+  for (let i = 0; i < lines.length; i++) __influxBuffer.push(lines[i]);
+  if (__influxBuffer.length >= INFLUX_FLUSH_THRESHOLD) flushInfluxLines();
+}
+function flushInfluxLines() {
+  if (!INFLUX_V2_ENABLED || __influxBuffer.length === 0) return;
+  const batch = __influxBuffer;
+  __influxBuffer = [];
   http.post(
     INFLUX_V2_URL + '/api/v2/write?org=' + encodeURIComponent(INFLUX_V2_ORG) + '&bucket=' + encodeURIComponent(INFLUX_V2_BUCKET) + '&precision=ns',
-    lines.join('\\n'),
+    batch.join('\\n'),
     {
       headers: { Authorization: 'Token ' + INFLUX_V2_TOKEN, 'Content-Type': 'text/plain; charset=utf-8' },
       tags: { api: 'influx-v2-write', step: 'metrics-publish', name: 'POST /api/v2/write' },
@@ -209,6 +225,11 @@ export function setup() {
 `;
 }
 /** teardown() export – writes testStartEnd finished event */
+// NOTE: teardown() runs in its own fresh VU context in k6, so it can only flush
+// its own (empty) buffer — it cannot reach into other VUs' buffers. Each VU may
+// lose up to INFLUX_FLUSH_THRESHOLD-1 buffered lines (a few trailing requests)
+// when it exits. That's an acceptable trade for cutting blocking InfluxDB
+// writes ~3-4x; k6's architecture gives no per-VU exit hook to flush earlier.
 function influxTeardown() {
     return `
 export function teardown() {
@@ -216,6 +237,7 @@ export function teardown() {
   writeInfluxLines([
     'testStartEnd,' + buildInfluxTagSet({ runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, type: 'finished' }) + ' value=1i ' + ts,
   ]);
+  flushInfluxLines();
 }
 `;
 }

@@ -28,10 +28,24 @@ interface LoadProfileConfig {
   constantDuration?: string;
 }
 
-const MAX_HAR_FILE_SIZE_MB = 200;
+// Matches the backend's multer limit (harGenerate.ts/upload.ts) — capped below
+// 200MB because the raw file is later base64'd into a jsonb column, and
+// Postgres caps a single jsonb string at ~256MB (200MB raw would exceed that
+// once encoded, so the suite would generate but then fail to save).
+const MAX_HAR_FILE_SIZE_MB = 150;
+
+interface ValidationConfig {
+  checks?: string[];
+  thresholds?: Record<string, { condition: string; abortOnFail?: boolean }[]>;
+}
 
 interface HarToScriptPanelProps {
   loadProfile?: LoadProfileConfig;
+  // Section D (Validation and Threshold) checks/thresholds — forwarded to
+  // /api/har-generate so the generated script's options.thresholds and
+  // check() assertions reflect what the user actually configured, instead of
+  // always falling back to the backend's hardcoded defaults.
+  validationConfig?: ValidationConfig;
   onScriptGenerated?: (script: string) => void;
   disabled?: boolean;
   disabledReason?: string;
@@ -62,6 +76,7 @@ function base64ToFile(stored: StoredFile): File {
 
 export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
   loadProfile,
+  validationConfig,
   onScriptGenerated,
   disabled,
   disabledReason,
@@ -143,6 +158,7 @@ export const HarToScriptPanel: React.FC<HarToScriptPanelProps> = ({
     const formData = new FormData();
     for (const f of files) formData.append('files', f);
     if (loadProfile) formData.append('loadProfile', JSON.stringify(loadProfile));
+    if (validationConfig) formData.append('validationConfig', JSON.stringify(validationConfig));
     if (useCsvCredentials) {
       formData.append('useCsvCredentials', 'true');
       if (credentialBatchId) formData.append('credentialBatchId', credentialBatchId);

@@ -50,7 +50,7 @@ const slo_1 = require("./lib/slo");
 const auth_2 = __importDefault(require("./routes/auth"));
 const agents_1 = __importDefault(require("./routes/agents"));
 const dashboard_1 = __importDefault(require("./routes/dashboard"));
-const testSpecs_1 = __importDefault(require("./routes/testSpecs"));
+const testSpecs_1 = __importStar(require("./routes/testSpecs"));
 const executions_1 = __importDefault(require("./routes/executions"));
 const environments_1 = __importDefault(require("./routes/environments"));
 const secrets_1 = __importDefault(require("./routes/secrets"));
@@ -58,19 +58,34 @@ const reports_1 = __importDefault(require("./routes/reports"));
 const upload_1 = __importDefault(require("./routes/upload"));
 const executor_1 = __importDefault(require("./routes/executor"));
 const aiGenerate_1 = __importDefault(require("./routes/aiGenerate"));
+const harGenerate_1 = __importDefault(require("./routes/harGenerate"));
 const agentRegistry_1 = require("./services/agentRegistry");
+const autoFixRunner_1 = require("./services/autoFixRunner");
 const influxdb_1 = require("./services/influxdb");
-const config_1 = __importDefault(require("./routes/config"));
+const coralogix_1 = require("./services/coralogix");
+const requestLogger_1 = require("./middleware/requestLogger");
+const config_1 = __importStar(require("./routes/config"));
+const selfHeal_1 = require("./lib/selfHeal");
 const grafanaProxy_1 = __importDefault(require("./routes/grafanaProxy"));
-const users_1 = __importDefault(require("./routes/users"));
+const grafanaSync_1 = __importDefault(require("./routes/grafanaSync"));
 const schedules_1 = __importDefault(require("./routes/schedules"));
 const notifications_1 = __importDefault(require("./routes/notifications"));
+const coralogix_2 = __importDefault(require("./routes/coralogix"));
 const schedulerService_1 = require("./services/schedulerService");
 const prisma_1 = __importDefault(require("./lib/prisma"));
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 3001;
 app.use((0, cors_1.default)());
-app.use(express_1.default.json({ limit: '5mb' }));
+// POST/PUT /api/test-specs persists the original uploaded HAR/JSON file(s) as
+// base64 inside uploadedFiles (so re-opening a saved suite doesn't require
+// re-uploading) — the HAR upload endpoints themselves (upload.ts/harGenerate.ts)
+// already accept files up to 200MB via multer, and base64 inflates that by
+// ~1.37x (≈274MB for a single max-size file), plus multiple captured files can
+// stack in one suite's uploadedFiles array — 250mb left no headroom and a
+// single largest-allowed HAR would already fail to SAVE even though it
+// generated successfully, so this must sit well above the multer ceiling.
+app.use(express_1.default.json({ limit: '500mb' }));
+app.use(requestLogger_1.requestLogger);
 // Public routes (no JWT required)
 app.use('/api/auth', auth_2.default);
 app.use('/api', agents_1.default); // POST /agents/register is public; GET /agents checks auth internally
@@ -79,9 +94,7 @@ app.get('/api/health', (_req, res) => {
 });
 app.use('/api/config', config_1.default); // public — exposes Grafana URL for frontend embedding
 app.use('/api', grafanaProxy_1.default); // public — proxies Grafana dashboard, strips X-Frame-Options
-// Serve built frontend (production mode)
-const frontendDist = path.join(__dirname, '../../frontend/dist');
-app.use(express_1.default.static(frontendDist));
+app.use('/api', grafanaSync_1.default); // public — sync PTaaS dashboard layout to Grafana
 // All remaining routes require JWT
 app.use(auth_1.requireAuth);
 app.use('/api/dashboard', dashboard_1.default);
@@ -93,12 +106,49 @@ app.use('/api/reports', reports_1.default);
 app.use('/api', upload_1.default);
 app.use('/api', executor_1.default);
 app.use('/api', aiGenerate_1.default);
-app.use('/api/users', users_1.default);
+app.use('/api', harGenerate_1.default);
 app.use('/api/schedules', schedules_1.default);
 app.use('/api/notifications', notifications_1.default);
+app.use('/api', coralogix_2.default);
+// Safety net: an uncaught throw inside an async route handler rejects a
+// promise Express never awaits, so without this it propagates to the
+// process and crashes the entire server for every user from one bad
+// request (e.g. a malformed TestSpec triggering a null-deref in a script
+// generator). Routes should still catch+next(err) themselves where
+// practical, but this guarantees a 500 instead of a full crash either way.
+app.use((err, _req, res, _next) => {
+    console.error('[Unhandled route error]', err);
+    if (res.headersSent)
+        return;
+    res.status(500).json({ error: err?.message ?? 'Internal server error' });
+});
 // Map of frontend WebSocket clients waiting for execution results
 // key: executionId, value: WebSocket
 exports.frontendClients = new Map();
+// Buffers every message sent to an execution's frontend WS, keyed by executionId.
+// The frontend only opens its WebSocket *after* POST /api/executor/run resolves —
+// for scripts that fail almost instantly (e.g. an unresolvable import), the agent
+// can send job_error/job_complete before that socket exists, so frontendClients.get()
+// finds nothing and the real error text is silently dropped with no way to recover
+// it. This buffer lets a late-connecting client replay everything it missed instead
+// of only seeing the generic "Execution complete. Exit code: N" replay message.
+// Cleared ~10 minutes after the execution finishes to bound memory.
+const executionLogBuffers = new Map();
+const EXECUTION_BUFFER_MAX = 500;
+function sendToExecution(executionId, payload) {
+    const buf = executionLogBuffers.get(executionId) ?? [];
+    buf.push(payload);
+    if (buf.length > EXECUTION_BUFFER_MAX)
+        buf.shift();
+    executionLogBuffers.set(executionId, buf);
+    const clientWs = exports.frontendClients.get(executionId);
+    if (clientWs?.readyState === ws_1.WebSocket.OPEN) {
+        clientWs.send(JSON.stringify(payload));
+    }
+}
+function scheduleExecutionBufferCleanup(executionId) {
+    setTimeout(() => executionLogBuffers.delete(executionId), 10 * 60 * 1000).unref();
+}
 // Rolling metrics accumulated from job_update events — used as fallback
 // when the agent sends summary:null in job_complete
 const rollingMetrics = new Map();
@@ -136,24 +186,47 @@ executorWss.on('connection', async (ws, req) => {
         ws.close();
         return;
     }
-    // Race condition guard: if the job already finished before the WS connected, replay the final state
+    // Race condition guard: if the job already finished before the WS connected, replay
+    // everything that was buffered (the real log lines/error text included) instead of
+    // just a generic synthetic message — see executionLogBuffers above for why this matters.
     if (exec.status === 'pass' || exec.status === 'fail' || exec.status === 'complete') {
-        ws.send(JSON.stringify({
-            type: 'complete',
-            timestamp: Date.now(),
-            data: { exitCode: exec.status === 'pass' ? 0 : 1, summary: null },
-        }));
+        const buffered = executionLogBuffers.get(executionId);
+        if (buffered?.length) {
+            for (const payload of buffered)
+                ws.send(JSON.stringify(payload));
+        }
+        else {
+            ws.send(JSON.stringify({
+                type: 'complete',
+                timestamp: Date.now(),
+                data: { exitCode: exec.status === 'pass' ? 0 : 1, summary: null },
+            }));
+        }
         ws.close();
         return;
     }
     if (exec.status === 'failed') {
-        ws.send(JSON.stringify({
-            type: 'error',
-            timestamp: Date.now(),
-            data: { message: 'Execution failed before connection was established' },
-        }));
+        const buffered = executionLogBuffers.get(executionId);
+        if (buffered?.length) {
+            for (const payload of buffered)
+                ws.send(JSON.stringify(payload));
+        }
+        else {
+            ws.send(JSON.stringify({
+                type: 'error',
+                timestamp: Date.now(),
+                data: { message: 'Execution failed before connection was established' },
+            }));
+        }
         ws.close();
         return;
+    }
+    // The job may already be running with some log lines buffered from before this
+    // socket connected (same race as above, just not yet terminal) — replay those too.
+    const alreadyBuffered = executionLogBuffers.get(executionId);
+    if (alreadyBuffered?.length) {
+        for (const payload of alreadyBuffered)
+            ws.send(JSON.stringify(payload));
     }
     exports.frontendClients.set(executionId, ws);
     ws.on('message', async (msg) => {
@@ -196,6 +269,7 @@ agentWss.on('connection', async (ws, req) => {
         data: { status: 'online', lastSeen: new Date() },
     }).catch(() => { });
     console.log(`[Agent] ${agentRecord.name} (${agentId}) connected`);
+    coralogix_1.coralogix.info('agent', { event: 'agent_connected', agentId, agentName: agentRecord.name });
     ws.on('message', async (msg) => {
         let payload;
         try {
@@ -223,13 +297,15 @@ agentWss.on('connection', async (ws, req) => {
                 }).catch(() => { });
                 break;
             case 'job_accepted':
-                // Agent confirmed receipt — nothing extra needed
+                coralogix_1.coralogix.info('k6_execution', {
+                    event: 'execution_accepted',
+                    executionId: payload.executionId,
+                    agentId,
+                    agentName: agentRecord.name,
+                });
                 break;
             case 'job_update': {
-                const clientWs = exports.frontendClients.get(payload.executionId);
-                if (clientWs?.readyState === ws_1.WebSocket.OPEN) {
-                    clientWs.send(JSON.stringify(payload.update));
-                }
+                sendToExecution(payload.executionId, payload.update);
                 // Accumulate rolling metrics from the live stream
                 if (payload.update?.type === 'metric' && payload.update.data) {
                     const d = payload.update.data;
@@ -258,14 +334,18 @@ agentWss.on('connection', async (ws, req) => {
                 break;
             }
             case 'job_complete': {
-                const { executionId, exitCode, summary } = payload;
-                const clientWs = exports.frontendClients.get(executionId);
+                const { executionId, exitCode, summary, thresholdResults = [], checkResults = [] } = payload;
                 // Helper: send a log line to the executor console
                 const sendLog = (text) => {
-                    if (clientWs?.readyState === ws_1.WebSocket.OPEN) {
-                        clientWs.send(JSON.stringify({ type: 'log', timestamp: Date.now(), data: { line: text } }));
-                    }
+                    sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: text } });
                 };
+                // Helper: notify the frontend which pipeline stage just changed, so
+                // the test-suite card can render a live progress bar (Script Generation >
+                // Script Execution > PostgreSQL Updated > InfluxDB Updated > Published to Grafana).
+                const sendStage = (stage, status) => {
+                    sendToExecution(executionId, { type: 'stage', timestamp: Date.now(), data: { stage, status } });
+                };
+                sendStage('script_execution', 'done');
                 // ── 1. Persist to PostgreSQL ───────────────────────────────────────────
                 // Prefer k6 end-of-test summary; fall back to rolling metrics accumulated
                 // from job_update events (agent sends summary:null when using --out json mode)
@@ -282,7 +362,6 @@ agentWss.on('connection', async (ws, req) => {
                     totalRequests: rolling.totalRequests,
                 } : null);
                 rollingMetrics.delete(executionId);
-                const status = exitCode === 0 ? 'pass' : 'fail';
                 const execution = await prisma_1.default.execution.findUnique({ where: { id: executionId } }).catch(() => null);
                 const duration = execution?.startedAt
                     ? Math.round((Date.now() - execution.startedAt.getTime()) / 1000)
@@ -290,16 +369,78 @@ agentWss.on('connection', async (ws, req) => {
                 // Evaluate SLOs against final metrics
                 const slosDefs = Array.isArray(execution?.slos) ? execution.slos : [];
                 const sloResults = (0, slo_1.evaluateSlos)(slosDefs, metrics);
+                // A run only passes if: k6 itself exited cleanly (all API calls succeeded
+                // and k6 thresholds were met), AND any defined SLA/SLO checks also passed.
+                // A breach in either dimension marks the report as failed.
+                const apiCallsOk = exitCode === 0;
+                const sloSlaOk = sloResults.overall !== 'fail';
+                const status = apiCallsOk && sloSlaOk ? 'pass' : 'fail';
+                // Compute threshold/check aggregate counts for the report summary row
+                const thresholdBreaches = thresholdResults.filter((t) => !t.passed).length;
+                const checksPassed = checkResults.filter((c) => c.passed).length;
+                const checksFailed = checkResults.filter((c) => !c.passed).length;
+                // Build a human-readable reason for the pass/fail status so a "fail"
+                // report doesn't just differ from a "pass" report by its badge — the
+                // specific threshold(s)/SLO(s) that flipped it must be visible too.
+                let failureReason;
+                if (status === 'fail') {
+                    const reasons = [];
+                    if (!apiCallsOk) {
+                        const breachedThresholds = thresholdResults.filter((t) => !t.passed);
+                        if (breachedThresholds.length > 0) {
+                            reasons.push(...breachedThresholds.map((t) => `Threshold breached: ${t.metric} ${t.condition} (actual: ${t.actual ?? '?'})`));
+                        }
+                        else if (exitCode === 99) {
+                            // k6's own exit code for "one or more thresholds crossed" — the
+                            // breakdown of which threshold didn't make it into thresholdResults
+                            // (e.g. handleSummary never ran/emitted), so name the exit code precisely
+                            // instead of a generic "non-zero code" message.
+                            reasons.push('One or more k6 thresholds were crossed (exit code 99), but the detailed breakdown was not captured for this run — check the console output for the failing metric.');
+                        }
+                        else {
+                            reasons.push(`k6 exited with non-zero code (${exitCode})`);
+                        }
+                    }
+                    if (!sloSlaOk) {
+                        const breachedSlos = sloResults.results.filter(r => !r.passed);
+                        reasons.push(...breachedSlos.map(r => `SLO breached: ${r.label} (actual: ${r.actual ?? '?'}${r.unit}, target: ${r.operator === 'lte' ? '≤' : '≥'} ${r.target}${r.unit})`));
+                    }
+                    failureReason = reasons.join('; ') || 'Execution failed';
+                }
                 await prisma_1.default.execution.update({
                     where: { id: executionId },
-                    data: { status, finishedAt: new Date(), duration, metrics: metrics ?? undefined, sloResults: sloResults },
+                    data: {
+                        status,
+                        finishedAt: new Date(),
+                        duration,
+                        metrics: metrics ?? undefined,
+                        sloResults: sloResults,
+                        thresholdBreaches,
+                        thresholdResults: thresholdResults,
+                        checksPassed,
+                        checksFailed,
+                        checkResults: checkResults,
+                        errorMessage: failureReason ?? null,
+                    },
                 }).catch(() => { });
+                coralogix_1.coralogix[status === 'pass' ? 'info' : 'warn']('k6_execution', {
+                    event: 'execution_complete',
+                    executionId,
+                    agentId,
+                    status,
+                    exitCode,
+                    durationSecs: duration,
+                    specName: execution?.specName,
+                    ...(metrics ?? {}),
+                    sloOverall: sloResults.overall,
+                });
                 if (execution?.specId) {
                     await prisma_1.default.testSpec.update({
                         where: { id: execution.specId },
                         data: { lastRunStatus: status, lastRunAt: new Date() },
                     }).catch(() => { });
                 }
+                sendStage('postgres', 'done');
                 // Log: PostgreSQL save details
                 const dbUrl = process.env.DATABASE_URL ?? '';
                 const dbHost = dbUrl.replace(/^.*@/, '').replace(/\/.*$/, '') || 'localhost:5432';
@@ -325,6 +466,70 @@ agentWss.on('connection', async (ws, req) => {
                         sendLog(`[PerfOps]   ${mark} [${r.type.toUpperCase()}] ${r.label}: ${r.actual ?? '?'}${r.unit} ${op} ${r.target}${r.unit}`);
                     }
                 }
+                // Log threshold breach results (populated from k6 handleSummary data)
+                if (thresholdResults.length > 0) {
+                    sendLog(`[PerfOps] ─────────────────────────────────────────────`);
+                    const tPass = thresholdResults.filter((t) => t.passed).length;
+                    const tTotal = thresholdResults.length;
+                    const tIcon = thresholdBreaches === 0 ? '✓' : '✗';
+                    sendLog(`[PerfOps] ${tIcon} k6 Thresholds: ${tPass}/${tTotal} passed${thresholdBreaches > 0 ? ` — ${thresholdBreaches} BREACH${thresholdBreaches > 1 ? 'ES' : ''}` : ''}`);
+                    for (const t of thresholdResults) {
+                        const mark = t.passed ? '✓' : '✗';
+                        sendLog(`[PerfOps]   ${mark} ${t.metric}: ${t.condition}`);
+                    }
+                }
+                // Log check results (populated from k6 handleSummary data)
+                if (checkResults.length > 0) {
+                    sendLog(`[PerfOps] ─────────────────────────────────────────────`);
+                    sendLog(`[PerfOps] ${checksFailed === 0 ? '✓' : '✗'} k6 Checks: ${checksPassed}/${checksPassed + checksFailed} passed`);
+                    for (const c of checkResults) {
+                        const mark = c.passed ? '✓' : '✗';
+                        const total = (c.passes ?? 0) + (c.fails ?? 0);
+                        const pct = total > 0 ? `${((c.passes / total) * 100).toFixed(1)}%` : '—';
+                        sendLog(`[PerfOps]   ${mark} ${c.name}: ${c.passes ?? 0} pass / ${c.fails ?? 0} fail (${pct})`);
+                    }
+                }
+                // ── Auto-fix & retry ───────────────────────────────────────────────────
+                // If this run was started with auto-fix enabled and it failed, ask Claude
+                // to diagnose the failure (thresholds/checks/console output) and rewrite
+                // the script, then redispatch the SAME executionId. Skip the rest of the
+                // finalize flow below (InfluxDB push, notifications, 'complete' signal) —
+                // from the frontend's point of view the job is still in progress.
+                const autoFixRun = (0, autoFixRunner_1.getAutoFixRun)(executionId);
+                if (status === 'fail' && autoFixRun && autoFixRun.attempt < autoFixRun.maxAttempts) {
+                    sendLog(`[PerfOps] ─────────────────────────────────────────────`);
+                    sendLog(`[PerfOps] ↻ Auto-fix: attempt ${autoFixRun.attempt}/${autoFixRun.maxAttempts} failed — asking Claude to analyze and fix the script…`);
+                    const bufferedLogs = (executionLogBuffers.get(executionId) ?? [])
+                        .filter((p) => p.type === 'log')
+                        .map((p) => p.data?.line ?? '')
+                        .join('\n');
+                    const fixResult = await (0, autoFixRunner_1.attemptAutoFix)(executionId, { exitCode, summary, thresholdResults, checkResults, consoleTail: bufferedLogs }, (line) => sendLog(`[AutoFix] ${line}`));
+                    if (fixResult.ok) {
+                        sendLog(`[PerfOps] ✓ Auto-fix applied — re-running script (attempt ${fixResult.nextAttempt}/${autoFixRun.maxAttempts})…`);
+                        const fixedScript = (0, autoFixRunner_1.getAutoFixRun)(executionId)?.script;
+                        sendToExecution(executionId, { type: 'retry', timestamp: Date.now(), data: { attempt: fixResult.nextAttempt, maxAttempts: autoFixRun.maxAttempts, fixedScript } });
+                        agentRegistry_1.agentRegistry.setStatus(agentId, 'online');
+                        await prisma_1.default.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => { });
+                        break;
+                    }
+                    sendLog(`[PerfOps] ⚠ Auto-fix could not be applied (${fixResult.reason}) — reporting final result.`);
+                    (0, autoFixRunner_1.clearAutoFixRun)(executionId);
+                }
+                else if (autoFixRun) {
+                    // The run healed (or exhausted its attempts) — if it healed and this
+                    // execution belongs to a saved TestSpec, persist the script Claude
+                    // ended up with so the suite reflects what actually passed, and push
+                    // it to GitHub/GitLab the same way a manual save does.
+                    if (status === 'pass' && execution?.specId) {
+                        await prisma_1.default.testSpec.update({
+                            where: { id: execution.specId },
+                            data: { generatedScript: autoFixRun.script },
+                        }).catch(() => { });
+                        (0, testSpecs_1.syncScriptToRepos)(execution.specId, execution.specName ?? execution.specId, autoFixRun.script);
+                        sendLog(`[PerfOps] ✓ Auto-fixed script saved to test suite and pushed to remote repo(s)`);
+                    }
+                    (0, autoFixRunner_1.clearAutoFixRun)(executionId);
+                }
                 // ── 2. Push to InfluxDB ────────────────────────────────────────────────
                 const finishedExecution = await prisma_1.default.execution
                     .findUnique({ where: { id: executionId } })
@@ -339,17 +544,31 @@ agentWss.on('connection', async (ws, req) => {
                     if (influxResult.skipped) {
                         sendLog(`[PerfOps] ⚠ InfluxDB not configured — metrics not pushed`);
                         sendLog(`[PerfOps]   → Set INFLUXDB_URL, INFLUXDB_TOKEN, INFLUXDB_ORG, INFLUXDB_BUCKET in backend/.env`);
+                        sendStage('influx', 'skipped');
+                        sendStage('grafana', 'skipped');
                     }
                     else if (influxResult.error) {
                         sendLog(`[PerfOps] ✗ InfluxDB push failed: ${influxResult.error}`);
                         sendLog(`[PerfOps]   → URL: ${influxResult.url}  |  Org: ${influxResult.org}  |  Bucket: ${influxResult.bucket}`);
+                        coralogix_1.coralogix.error('influxdb', { event: 'influxdb_push_failed', executionId, error: influxResult.error, url: influxResult.url });
+                        sendStage('influx', 'error');
+                        sendStage('grafana', 'error');
                     }
                     else {
                         sendLog(`[PerfOps] ✓ Metrics pushed to InfluxDB`);
                         sendLog(`[PerfOps]   → URL:    ${influxResult.url}`);
                         sendLog(`[PerfOps]   → Org:    ${influxResult.org}  |  Bucket: ${influxResult.bucket}`);
                         sendLog(`[PerfOps]   → Points: ${influxResult.pointsWritten} written  (k6_execution + k6_thresholds)`);
+                        coralogix_1.coralogix.info('influxdb', { event: 'influxdb_push_ok', executionId, pointsWritten: influxResult.pointsWritten });
+                        sendStage('influx', 'done');
+                        // Grafana reads live from InfluxDB — once the points land, the
+                        // dashboards are up to date, so mark this stage complete too.
+                        sendStage('grafana', 'done');
                     }
+                }
+                else {
+                    sendStage('influx', 'error');
+                    sendStage('grafana', 'error');
                 }
                 sendLog(`[PerfOps] ─────────────────────────────────────────────`);
                 // Dispatch notifications for completed execution (includes full metrics for report email)
@@ -378,33 +597,58 @@ agentWss.on('connection', async (ws, req) => {
                     }).catch((err) => console.warn('[Notifications] dispatch error:', err.message));
                 }
                 // ── 3. Signal completion to frontend ──────────────────────────────────
-                if (clientWs?.readyState === ws_1.WebSocket.OPEN) {
-                    clientWs.send(JSON.stringify({
-                        type: 'complete',
-                        timestamp: Date.now(),
-                        data: { exitCode, summary },
-                    }));
-                }
+                sendToExecution(executionId, {
+                    type: 'complete',
+                    timestamp: Date.now(),
+                    data: { exitCode, summary },
+                });
+                scheduleExecutionBufferCleanup(executionId);
                 agentRegistry_1.agentRegistry.setStatus(agentId, 'online');
                 await prisma_1.default.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => { });
+                // Credentials CSV cache (if any) is only needed for the duration of the
+                // run — drop it now that the execution has reached a terminal state.
+                await prisma_1.default.executionCredential.deleteMany({ where: { executionId } }).catch(() => { });
                 break;
             }
             case 'job_error': {
                 const { executionId, message } = payload;
-                const clientWs = exports.frontendClients.get(executionId);
-                if (clientWs?.readyState === ws_1.WebSocket.OPEN) {
-                    clientWs.send(JSON.stringify({
-                        type: 'error',
-                        timestamp: Date.now(),
-                        data: { message },
-                    }));
+                const autoFixRun = (0, autoFixRunner_1.getAutoFixRun)(executionId);
+                if (autoFixRun && autoFixRun.attempt < autoFixRun.maxAttempts) {
+                    sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[PerfOps] ✗ Execution error (attempt ${autoFixRun.attempt}/${autoFixRun.maxAttempts}): ${message}` } });
+                    sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[PerfOps] ↻ Auto-fix: asking Claude to analyze and fix the script…` } });
+                    const bufferedLogs = (executionLogBuffers.get(executionId) ?? [])
+                        .filter((p) => p.type === 'log')
+                        .map((p) => p.data?.line ?? '')
+                        .join('\n');
+                    const fixResult = await (0, autoFixRunner_1.attemptAutoFix)(executionId, { message, consoleTail: bufferedLogs }, (line) => sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[AutoFix] ${line}` } }));
+                    if (fixResult.ok) {
+                        sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[PerfOps] ✓ Auto-fix applied — re-running script (attempt ${fixResult.nextAttempt}/${autoFixRun.maxAttempts})…` } });
+                        const fixedScript = (0, autoFixRunner_1.getAutoFixRun)(executionId)?.script;
+                        sendToExecution(executionId, { type: 'retry', timestamp: Date.now(), data: { attempt: fixResult.nextAttempt, maxAttempts: autoFixRun.maxAttempts, fixedScript } });
+                        agentRegistry_1.agentRegistry.setStatus(agentId, 'online');
+                        await prisma_1.default.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => { });
+                        break;
+                    }
+                    sendToExecution(executionId, { type: 'log', timestamp: Date.now(), data: { line: `[PerfOps] ⚠ Auto-fix could not be applied: ${fixResult.reason}` } });
+                    (0, autoFixRunner_1.clearAutoFixRun)(executionId);
                 }
+                else if (autoFixRun) {
+                    (0, autoFixRunner_1.clearAutoFixRun)(executionId);
+                }
+                sendToExecution(executionId, {
+                    type: 'error',
+                    timestamp: Date.now(),
+                    data: { message },
+                });
+                scheduleExecutionBufferCleanup(executionId);
                 await prisma_1.default.execution.update({
                     where: { id: executionId },
-                    data: { status: 'fail', finishedAt: new Date() },
+                    data: { status: 'fail', finishedAt: new Date(), errorMessage: message },
                 }).catch(() => { });
+                coralogix_1.coralogix.error('k6_execution', { event: 'execution_error', executionId, agentId, message });
                 agentRegistry_1.agentRegistry.setStatus(agentId, 'online');
                 await prisma_1.default.agent.update({ where: { id: agentId }, data: { status: 'online' } }).catch(() => { });
+                await prisma_1.default.executionCredential.deleteMany({ where: { executionId } }).catch(() => { });
                 break;
             }
         }
@@ -416,6 +660,7 @@ agentWss.on('connection', async (ws, req) => {
             data: { status: 'offline' },
         }).catch(() => { });
         console.log(`[Agent] ${agentRecord.name} (${agentId}) disconnected`);
+        coralogix_1.coralogix.info('agent', { event: 'agent_disconnected', agentId, agentName: agentRecord.name });
     });
 });
 function extractMetrics(summary) {
@@ -439,21 +684,38 @@ function extractMetrics(summary) {
         return null;
     }
 }
-// SPA fallback — must be after all API routes
-app.get('*', (_req, res) => {
-    res.sendFile(path.join(frontendDist, 'index.html'));
-});
-const HOST = '0.0.0.0';
 schedulerService_1.schedulerService.init();
-server.listen(Number(PORT), HOST, () => {
-    const ifaces = require('os').networkInterfaces();
-    const lan = Object.values(ifaces)
-        .flat()
-        .find((i) => i.family === 'IPv4' && !i.internal);
-    console.log(`PerfOps running on:`);
-    console.log(`  Local:   http://localhost:${PORT}`);
-    if (lan)
-        console.log(`  Network: http://${lan.address}:${PORT}`);
+server.listen(PORT, () => {
+    console.log(`PerfOps backend running on http://localhost:${PORT}`);
+    // Auto-verify InfluxDB/Grafana connectivity on every dev startup.
+    // If either service is down, self-heal attempts to start the Windows
+    // service and polls until healthy (up to 60 s each), then re-checks.
+    (async () => {
+        try {
+            const initial = await (0, config_1.testConnections)();
+            const needsHeal = !initial.influxdb.connected || !initial.grafana.connected;
+            if (!needsHeal) {
+                console.log(`[InfluxDB] ✓ Connected${initial.influxdb.latencyMs != null ? ` (${initial.influxdb.latencyMs}ms)` : ''}`);
+                console.log(`[Grafana]  ✓ Connected${initial.grafana.latencyMs != null ? ` (${initial.grafana.latencyMs}ms)` : ''}`);
+                return;
+            }
+            // Log which services are down before attempting heal
+            if (!initial.influxdb.connected) {
+                console.warn(`[InfluxDB] ✗ ${initial.influxdb.message} — starting self-heal...`);
+            }
+            if (!initial.grafana.connected) {
+                console.warn(`[Grafana]  ✗ ${initial.grafana.message} — starting self-heal...`);
+            }
+            await (0, selfHeal_1.selfHealConnections)();
+            // Final check after heal
+            const after = await (0, config_1.testConnections)();
+            console.log(`[InfluxDB] ${after.influxdb.connected ? '✓ Connected' : '✗ ' + after.influxdb.message}${after.influxdb.latencyMs != null ? ` (${after.influxdb.latencyMs}ms)` : ''}`);
+            console.log(`[Grafana]  ${after.grafana.connected ? '✓ Connected' : '✗ ' + after.grafana.message}${after.grafana.latencyMs != null ? ` (${after.grafana.latencyMs}ms)` : ''}`);
+        }
+        catch (err) {
+            console.error('[Startup] Connectivity check failed:', err.message);
+        }
+    })();
 });
 // Graceful shutdown — prevents EADDRINUSE on restart
 function shutdown() {
@@ -463,4 +725,10 @@ function shutdown() {
 }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
+// Last-resort net for rejections outside the Express request cycle (e.g. a
+// fire-and-forget async call with no .catch()) - logs instead of crashing
+// the whole server, mirroring the error-handling middleware above.
+process.on('unhandledRejection', (reason) => {
+    console.error('[Unhandled rejection]', reason);
+});
 exports.default = app;

@@ -1,9 +1,10 @@
 import * as cron from 'node-cron';
 import { CronExpressionParser } from 'cron-parser';
 import prisma from '../lib/prisma';
-import { generateK6Script } from './k6Generator';
 import { dispatchJob } from './jobDispatcher';
 import { notificationService } from './notificationService';
+import { fetchScript as fetchScriptFromGithub } from './githubService';
+import { fetchScript as fetchScriptFromGitlab } from './gitlabService';
 import type { Schedule } from '@prisma/client';
 
 const activeTasks = new Map<string, ReturnType<typeof cron.schedule>>();
@@ -76,18 +77,52 @@ async function runSchedule(schedule: Schedule) {
   let lastRunStatus = 'dispatched';
   let finalExecution = execution;
 
-  try {
-    const script = generateK6Script(spec as any, baseUrl);
-    await dispatchJob(execution.id, script, {
-      baseUrl,
-      profileType: (spec.loadProfile as any)?.type || 'staged',
-      stages: (spec.loadProfile as any)?.stages || [],
+  const dispatchConfig = {
+    baseUrl,
+    profileType: (spec.loadProfile as any)?.type || 'staged',
+    stages: (spec.loadProfile as any)?.stages || [],
+  };
+
+  // When "Fetch script from repo on each run" is enabled, the script is
+  // pulled fresh from the configured repo at run time instead of the
+  // TestSpec's locally stored generatedScript, so the schedule always
+  // executes whatever is currently committed. Uses the schedule's own repo
+  // override if set (githubRepoUrl/branch/scriptPath/token, or the GitLab
+  // equivalents), otherwise falls back to the GITHUB_*/GITLAB_* env vars.
+  // When disabled, use the TestSpec's own generatedScript directly — this
+  // was previously ignored entirely (the fetch always ran regardless of the
+  // toggle), so a schedule with the toggle left off — the default — failed
+  // outright unless the server happened to have GITHUB_TOKEN/OWNER/REPO env
+  // vars configured as a silent fallback.
+  // Fetch + dispatch happens off the scheduler's critical path — the cron
+  // tick (and any triggerNow HTTP request) returns as soon as the Execution
+  // row is queued, without waiting on the repo round-trip.
+  const useGitlab = (schedule as any).scmProvider === 'gitlab';
+  const fetchFromRepo = (schedule as any).fetchFromGithub === true;
+  const scriptPromise: Promise<string> = fetchFromRepo
+    ? (useGitlab
+        ? fetchScriptFromGitlab(spec.name, {
+            repoUrl: (schedule as any).gitlabRepoUrl,
+            branch: (schedule as any).gitlabBranch,
+            scriptPath: (schedule as any).gitlabScriptPath,
+            token: (schedule as any).gitlabToken,
+          })
+        : fetchScriptFromGithub(spec.name, {
+            repoUrl: (schedule as any).githubRepoUrl,
+            branch: (schedule as any).githubBranch,
+            scriptPath: (schedule as any).githubScriptPath,
+            token: (schedule as any).githubToken,
+          }))
+    : spec.generatedScript
+      ? Promise.resolve(spec.generatedScript)
+      : Promise.reject(new Error(`Test spec "${spec.name}" has no generated script — author/generate a script for it, or enable "Fetch script from repo on each run" on this schedule.`));
+
+  scriptPromise
+    .then(script => dispatchJob(execution.id, script, dispatchConfig))
+    .catch(async (err: any) => {
+      console.warn(`[Scheduler] ${fetchFromRepo ? (useGitlab ? 'GitLab' : 'GitHub') : 'local'} fetch/dispatch failed for schedule ${schedule.id}: ${err.message}`);
+      await prisma.execution.update({ where: { id: execution.id }, data: { status: 'fail', errorMessage: err.message } });
     });
-  } catch (err: any) {
-    console.warn(`[Scheduler] Dispatch failed for schedule ${schedule.id}: ${err.message}`);
-    lastRunStatus = 'failed';
-    finalExecution = await prisma.execution.update({ where: { id: execution.id }, data: { status: 'fail' } });
-  }
 
   await prisma.schedule.update({
     where: { id: schedule.id },
@@ -161,6 +196,16 @@ export const schedulerService = {
     cronExpression: string;
     enabled: boolean;
     notificationConfigId: string | null;
+    fetchFromGithub?: boolean;
+    scmProvider?: string;
+    githubRepoUrl?: string | null;
+    githubBranch?: string | null;
+    githubScriptPath?: string | null;
+    githubToken?: string | null;
+    gitlabRepoUrl?: string | null;
+    gitlabBranch?: string | null;
+    gitlabScriptPath?: string | null;
+    gitlabToken?: string | null;
   }) => {
     const schedule = await prisma.schedule.create({
       data: { ...data, nextRunAt: data.enabled ? computeNextRun(data.cronExpression) : null },

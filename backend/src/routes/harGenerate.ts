@@ -18,9 +18,15 @@ import {
 
 const router = Router();
 
+// Capped at 150MB, not the 200MB this endpoint used to allow — the raw file is
+// later persisted as a base64 string inside TestSpec.uploadedFiles (a jsonb
+// column), and Postgres hard-caps any single jsonb string at ~256MB. Base64
+// inflates by ~4/3, so 200MB raw (~274MB encoded) already exceeded that cap —
+// the suite would generate fine but then fail to ever SAVE. 150MB raw
+// (~200MB encoded) leaves real margin.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 200 * 1024 * 1024 },
+  limits: { fileSize: 150 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = '.' + file.originalname.split('.').pop()?.toLowerCase();
     if (['.har', '.json'].includes(ext)) cb(null, true);
@@ -40,6 +46,34 @@ interface LoadProfileConfig {
   stages?: { target: number; duration: string }[];
   constantVus?: number;
   constantDuration?: string;
+}
+
+// Mirrors AIGeneratePanel's SpecContext.checks/thresholds (backend/src/routes/aiGenerate.ts) —
+// the "Validation and Threshold" section of the Test Authoring form. The HAR
+// generation path previously never received these at all, so every HAR-derived
+// script silently fell back to the hardcoded defaults in rule 8 below
+// regardless of what the user configured.
+interface ValidationConfig {
+  checks?: string[];
+  thresholds?: Record<string, { condition: string; abortOnFail?: boolean }[]>;
+}
+
+function describeValidationConfig(cfg: ValidationConfig | null): string {
+  if (!cfg) return '';
+  const lines: string[] = [];
+
+  const checks = (cfg.checks ?? []).filter(c => c && c.trim());
+  if (checks.length) {
+    lines.push(`\nMANDATORY CHECKS (VALIDATIONS ONLY — see rule 8(c)) — the user configured these exact checks in the Validation and Threshold section; every replayed request's check() block must assert them (in addition to the status/response-time checks already required by the REPLAY HARNESS PATTERN). These are informational validations, NOT pass/fail gates — a failing one must log a console.warn() WARNING, never fail the run or count as an error: ${checks.join(' | ')}\n`);
+  }
+
+  const thresholdEntries = Object.entries(cfg.thresholds ?? {});
+  if (thresholdEntries.length) {
+    const rendered = thresholdEntries.map(([metric, conds]) => `${metric}: ${conds.map(c => c.condition).join(', ')}`).join(' | ');
+    lines.push(`\nMANDATORY THRESHOLDS (SLA/SLO — see rule 8(b)) — the user configured these exact conditions in the Validation and Threshold section; use them verbatim in options.thresholds INSTEAD of the defaults in rule 8: ${rendered}. These ARE the pass/fail gate for the run — breaching any of them fails the test. If the metric is http_req_duration or http_req_failed, still apply the {endpoint_type:app} tag scope from rule 8 to the KEY (e.g. user condition "rate<0.01" on metric "http_req_failed" becomes 'http_req_failed{endpoint_type:app}': ['rate<0.01']) — the condition itself is exactly what the user typed, only the key gets the mandatory scope so InfluxDB traffic still can't affect it. Do not add a 'checks' threshold — checks are validations only (rule 8(c)) and must never gate pass/fail.\n`);
+  }
+
+  return lines.join('');
 }
 
 interface ReplayRequest {
@@ -185,9 +219,9 @@ ${stagesList}
   ]\n`;
 }
 
-function buildHarSystemPrompt(baseUrl: string | null, loadProfile: LoadProfileConfig | null, totalCalls: number, hasLogin: boolean, useCsvCredentials: boolean): string {
+function buildHarSystemPrompt(baseUrl: string | null, loadProfile: LoadProfileConfig | null, totalCalls: number, hasLogin: boolean, useCsvCredentials: boolean, validationConfig: ValidationConfig | null): string {
   return `You are an expert performance engineer specializing in k6 load testing with InfluxDB v2 integration. You are writing a REPLAY HARNESS for a captured browser session (HAR export) — a small, fixed amount of code that iterates generically over an already-extracted array of API calls. You do NOT write one code block per captured call; the calls themselves are supplied to you as a runtime data array, not something you transcribe.
-${describeLoadProfile(loadProfile)}
+${describeLoadProfile(loadProfile)}${describeValidationConfig(validationConfig)}
 LOGIN_REQUEST and CAPTURED_REQUESTS are constants that will be injected into your script automatically — do NOT declare or redeclare them yourself, do NOT attempt to enumerate, copy, or transcribe their contents. Their shapes are:
   LOGIN_REQUEST: ${useCsvCredentials
     ? `null — login credentials come from an uploaded CSV pool instead (see CSV-BASED PER-VU CREDENTIALS below); the captured session's own login call, if any, is excluded from CAPTURED_REQUESTS and unused.`
@@ -199,7 +233,7 @@ LOGIN_REQUEST and CAPTURED_REQUESTS are constants that will be injected into you
 
 MANDATORY RULES — every rule must be followed exactly:
 1. Output ONLY valid JavaScript — no markdown, no code fences, no explanation text.
-2. Structure, in this exact order: (a) imports — http from 'k6/http', { check, group, sleep } from 'k6', metrics from 'k6/metrics', textSummary from the jslib summary URL; (b) the single line ${DATA_PLACEHOLDER} on its own line, verbatim, immediately after the imports — this is where the real captured-request data gets spliced in; (c) the InfluxDB v2 integration block shown below, word for word; (d) the REPLAY HARNESS PATTERN shown below; (e) handleSummary.
+2. Structure, in this exact order: (a) imports — http from 'k6/http', { check, group, sleep, fail } from 'k6' (fail is MANDATORY, not optional — ensureAuth()/getVuCredential() in the REPLAY HARNESS PATTERN below call fail() when login credentials are missing or a login request fails; omitting it from the import crashes the ENTIRE script with "fail is not defined" the moment that path is hit, aborting every VU instead of failing just that one login attempt), metrics from 'k6/metrics', textSummary from the jslib summary URL; (b) the single line ${DATA_PLACEHOLDER} on its own line, verbatim, immediately after the imports — this is where the real captured-request data gets spliced in; (c) the InfluxDB v2 integration block shown below, word for word; (d) the REPLAY HARNESS PATTERN shown below; (e) handleSummary.
 3. Use __ENV.BASE_URL for all request base URLs, defaulting to ${baseUrl ? `'${baseUrl}' (this is the origin the captured calls were made against — do NOT use localhost)` : `'http://localhost:3000'`}.
 4. Do NOT write a separate function or group() per captured call. Write exactly the generic replayStep()/sessionReplay() functions shown in the REPLAY HARNESS PATTERN below — they already iterate over every entry in CAPTURED_REQUESTS, which guarantees complete coverage without you needing to enumerate anything.
 5. Declare 'export const options = { scenarios: {...}, thresholds: {...} };' EXACTLY ONCE in the whole script, using 'const' (never 'let'/'var'), immediately after imports — a script with more than one export named 'options' (regardless of declaration keyword) fails to load at all with "Duplicate export name 'options'" before a single request runs. Put scenarios AND thresholds in that single object literal; never declare a second 'options' block later to add thresholds or anything else, and never reassign/mutate 'options' after the fact as a substitute for getting the first declaration right. SCENARIO_MAX_VUS must be computed robustly across executor types (constant-vus uses vus, ramping-vus uses stages targets, arrival-rate executors use preAllocatedVUs/maxVUs) using Math.max and ?? (not ||):
@@ -214,8 +248,8 @@ MANDATORY RULES — every rule must be followed exactly:
   );
 6. Use ?? instead of || when the right-hand side is a fallback for null/undefined.
 7. handleSummary must output ONLY stdout — do NOT write any file (no summary.json).
-8. Pick a descriptive TEST_NAME and SCENARIO_NAME based on the nature of the captured session (e.g. inferred from the request paths), and set options.thresholds to sensible defaults (p(95)<1000, http_req_failed rate<0.8, checks rate>0.9) unless told otherwise above. http_req_failed stays lenient only as a run-abort guardrail against catastrophic failure; the real per-step pass/fail signal comes from the isResponseStatusExpected()-based check() in replayStep below, not from this blanket threshold. The checks threshold IS the strict signal — it's based on the same per-step check() calls, so it must stay meaningfully tighter than http_req_failed (e.g. checks rate>0.9 vs http_req_failed rate<0.8): a run should not report PASS while a large fraction of individual steps are functionally failing.
-9. The InfluxDB block below already declares isResponseStatusExpected(response, expectedStatus) — reuse it verbatim in replayStep's check()/error-logging. Do not redeclare it. It NEVER treats 401/403 as expected — a real auth failure must always count against http_req_failed/checks/errorRate, not be silently absorbed. On top of it, replayStep below also reuses isKnownBenignNotFound(reqDef, response) (see REPLAY HARNESS PATTERN) to tolerate specific endpoints that legitimately 404 depending on environment/record state (advanced-workflow-configuration, release_lock/release-lock), and isIdempotentDeleteOutcome(reqDef, response) to tolerate a replayed DELETE landing on 404/409 (already-deleted/conflicting-delete) — do not remove or narrow either allowance, and do not extend either to 401/403.
+8. PASS/FAIL POLICY — MANDATORY, applies uniformly across console output, options.thresholds, check(), and recordCustomMetrics: (a) EVERY 4xx/5xx response status is ALWAYS a real failure — there is no "this endpoint is known to legitimately 404" or "DELETE landing on 404/409 is fine" tolerance anymore; every non-2xx/3xx response counts against http_req_failed and errorCount unconditionally, no exceptions, not even for CAPTURED_REQUESTS entries whose expectedStatus itself was a 4xx/5xx (isResponseStatusExpected below governs check()/warning labeling only, never the failure/errorCount computation). Do NOT set a responseCallback param on any request — leave it unset so k6's own default status-based failure determination (>=400 = failed) applies directly; do NOT write a custom function for it (unsupported in this k6 build — fails every request outright with "unsupported responseCallback") and do NOT use http.expectedStatuses() to tolerate anything either. (b) options.thresholds is the SLA/SLO gate for the WHOLE RUN — set 'http_req_duration{endpoint_type:app}': ['p(95)<1000'] and 'http_req_failed{endpoint_type:app}': ['rate<0.05'] as sensible defaults unless told otherwise above; breaching either FAILS the test. The {endpoint_type:app} scope is MANDATORY on both (every replayed request in doRequest is tagged endpoint_type: 'app'; the InfluxDB write/precheck calls in the InfluxDB block below are deliberately left untagged so they never pollute this SLA signal). Do NOT add a 'checks' entry to options.thresholds — checks must never gate pass/fail (see (c)). (c) Checks (the status/response-time assertions built from CAPTURED_REQUESTS' expectedStatus/responseThresholdMs, and any user-configured Validation entries) are informational validations ONLY — check() still runs and still populates the 'checks' metric for visibility in the report, but a failing check must be logged via console.warn (a WARNING), never console.error, and must never be wired into options.thresholds or otherwise fail the run by itself. A request can simultaneously log an ERROR (its status was 4xx/5xx, per (a)) and/or a WARNING (its check() failed, per (c)) — these are independent signals, log both when both apply.
+9. The InfluxDB block below already declares isResponseStatusExpected(response, expectedStatus) — reuse it verbatim, but ONLY for check()'s pass/fail label and the WARNING log text (per rule 8(c)) — never for deciding whether a response counts as a failure (that's rule 8(a): raw status >= 400, unconditionally, no isResponseStatusExpected involved). Do not redeclare isResponseStatusExpected, and do not reintroduce any per-endpoint or per-method tolerance function — none is needed anymore.
 10. ALWAYS include the closing 'export default function (setupData) { sessionReplay(setupData); }' shown at the end of the REPLAY HARNESS PATTERN, even though the scenario's own exec already names sessionReplay. It is a required safety net: a k6 script with no exported function at all fails to start with an opaque error instead of running.
 ${useCsvCredentials
     ? `11. Login credentials come from an uploaded CSV pool (one login per VU) — see the CSV-BASED PER-VU CREDENTIALS pattern below. This is MANDATORY: do not use LOGIN_REQUEST or any setup()-based shared login for this script; every VU authenticates independently via ensureAuth() the first time sessionReplay() runs for it. Reproduce getVuCredential()/ensureAuth()/reauth()/extractJwt()/authHeadersFromAuth() verbatim, including the REQUIRED InstanceName field in the login payload — do not simplify, rename, or omit it.
@@ -391,32 +425,36 @@ function refreshCsrfToken(jar, authHeaders) {
     reqDef.method,
     BASE_URL + reqDef.path,
     requestBody(reqDef.payload, reqDef.payloadType),
-    { headers: headers, redirects: 5, tags: { name: (reqDef.name || reqDef.path) + ' (csrf-refresh)' }, jar: jar }
+    { headers: headers, redirects: 5, tags: { name: (reqDef.name || reqDef.path) + ' (csrf-refresh)', endpoint_type: 'app' }, jar: jar }
   );
   captureCsrfToken(reqDef, res);
 }
 
-// Some endpoints are known to legitimately 404 depending on environment/record
-// state rather than because the replay drifted — e.g. an advanced workflow
-// configuration that isn't defined for a given level, or a record lock that's
-// already released by the time this step runs. Treat those as expected instead
-// of flagging every replay as a hard failure.
-function isKnownBenignNotFound(reqDef, response) {
-  if (response.status !== 404) return false;
-  const p = String(reqDef.path || '').toLowerCase();
-  return p.indexOf('advanced-workflow-configuration') !== -1
-    || p.indexOf('release_lock') !== -1
-    || p.indexOf('release-lock') !== -1;
-}
+// PASS/FAIL POLICY (mirrors the Test Authoring "Validation and Threshold"
+// section exactly — see rule 8/9 below for the full rationale):
+//   - Every 4xx/5xx status is ALWAYS a real failure. There is no "benign
+//     404"/"idempotent DELETE" tolerance anymore — a captured endpoint that
+//     legitimately varies by environment/record state must be reflected as a
+//     failure when it happens, not silently absorbed. This is unconditional
+//     and applies to k6's own http_req_failed metric (its default behavior,
+//     since no responseCallback is set — see doRequest below),
+//     recordCustomMetrics()'s errorCount (requestsRaw/the report), and the
+//     console error log.
+//   - Threshold/SLA/SLO (options.thresholds — http_req_duration,
+//     http_req_failed) are the pass/fail gate for the whole run: breaching
+//     one fails the test.
+//   - Checks (the free-text Validation entries from Section D, e.g. "status
+//     is 200") are informational only — a failing check is logged as a
+//     WARNING (console.warn), never as an error, and never gates pass/fail.
 
-// A replayed DELETE can legitimately land on 404 (already gone — e.g. a prior
-// retry, or a run that replayed the same correlated id twice) or 409 (a
-// conflicting concurrent delete/lock) without that being a real failure —
-// DELETE is idempotent by nature, so "the thing is already deleted" is a
-// success outcome, not a regression.
-function isIdempotentDeleteOutcome(reqDef, response) {
-  if (String(reqDef.method || '').toUpperCase() !== 'DELETE') return false;
-  return response.status === 404 || response.status === 409;
+// Captured HAR timings reflect ONE real user's single request, often 500ms —
+// too tight a bar to hold replay traffic to under concurrent load without
+// generating noisy false-positive check failures unrelated to real
+// regressions. Floor every per-request threshold at a stable minimum instead
+// of trusting the raw captured value verbatim.
+const RESPONSE_THRESHOLD_FLOOR_MS = 1000;
+function effectiveResponseThreshold(reqDef) {
+  return Math.max(reqDef.responseThresholdMs, RESPONSE_THRESHOLD_FLOOR_MS);
 }
 
 // Captured HAR timings reflect ONE real user's single request, often 500ms —
@@ -564,7 +602,7 @@ export function setup() {
     {
       headers: sanitizeHeaders(effectiveLoginRequest.headers),
       redirects: 5,
-      tags: { name: effectiveLoginRequest.name || effectiveLoginRequest.path },
+      tags: { name: effectiveLoginRequest.name || effectiveLoginRequest.path, endpoint_type: 'app' },
     }
   );
 
@@ -629,7 +667,7 @@ function reauth() {
     effectiveLoginRequest.method,
     BASE_URL + effectiveLoginRequest.path,
     requestBody(effectiveLoginRequest.payload, effectiveLoginRequest.payloadType),
-    { headers: sanitizeHeaders(effectiveLoginRequest.headers), redirects: 5, tags: { name: 'Reauth' }, jar: jar }
+    { headers: sanitizeHeaders(effectiveLoginRequest.headers), redirects: 5, tags: { name: 'Reauth', endpoint_type: 'app' }, jar: jar }
   );
   const body = getResponseBody(res);
   const sessionToken = extractSessionToken(body);
@@ -656,11 +694,12 @@ function reauth() {
 Write exactly ONE generic step-executor function — it is called once per entry
 in CAPTURED_REQUESTS, so it must not reference any specific captured call. Reuse
 isResponseStatusExpected(response, expectedStatus) from the InfluxDB block above
-instead of a strict === comparison — replayed sessions can legitimately land on
-a matching-class redirect, but NEVER on a 401/403 (see isResponseStatusExpected's
-own comment — those must always surface as real failures) — and layer
-isKnownBenignNotFound() (above) on top of it for the specific endpoints that
-legitimately 404 depending on environment/record state.
+instead of a strict === comparison for the check()/WARNING label ONLY (rule
+8(c)) — replayed sessions can legitimately land on a matching-class redirect,
+but NEVER on a 401/403 (see isResponseStatusExpected's own comment — those must
+always surface as real failures). This does NOT affect whether the response
+counts as a failure — per rule 8(a), ANY 4xx/5xx status is unconditionally a
+failure, with no per-endpoint or per-method exceptions.
 correlationVars (see ID CORRELATION above and getByJsonPath/substituteCorrelationVars/
 captureCorrelationVars helpers above) MUST be threaded through here — resolve
 placeholders in path/payload before sending, then capture this step's own
@@ -693,8 +732,15 @@ function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correl
     const params = {
       headers: headers,
       redirects: 5,
-      tags: { name: reqDef.name },
+      // endpoint_type: 'app' lets options.thresholds scope http_req_duration/
+      // http_req_failed to {endpoint_type:app} — excluding the InfluxDB
+      // write/precheck traffic from the InfluxDB block below, which is
+      // deliberately left untagged for endpoint_type so it never matches.
+      tags: { name: reqDef.name, endpoint_type: 'app' },
       jar: jar,
+      // Deliberately NO responseCallback — leave k6's default failure
+      // determination in place (status >= 400 = failed) so every 4xx/5xx is
+      // unconditionally a failure, per rule 8(a). Do NOT set one here.
     };
     return http.request(reqDef.method, url, requestBody(payload, reqDef.payloadType), params);
   }
@@ -718,24 +764,31 @@ function replayStep(reqDef, jar, ${useCsvCredentials ? '' : 'setupData, '}correl
   // needs the token it just produced.
   captureCsrfToken(reqDef, res);
 
-  // A captured call that 404s on a known-benign endpoint (see
-  // isKnownBenignNotFound above), or a DELETE that 404s/409s because the
-  // resource is already gone (see isIdempotentDeleteOutcome above), is
-  // treated as expected for THIS response only — it does not change reqDef
-  // itself, so unrelated failures on the same endpoint shape still fail normally.
-  const effectiveExpectedStatus = isKnownBenignNotFound(reqDef, res) ? 404
-    : isIdempotentDeleteOutcome(reqDef, res) ? res.status
-    : reqDef.expectedStatus;
-
+  // Checks are validations only (rule 8(c)) — they never change whether this
+  // response counts as a failure (that's rule 8(a): raw status >= 400,
+  // unconditional, computed independently below).
   const responseThresholdMs = effectiveResponseThreshold(reqDef);
+  const statusCheckPassed = isResponseStatusExpected(res, reqDef.expectedStatus);
+  const responseTimeCheckPassed = res.timings.duration < responseThresholdMs;
   check(res, {
-    [reqDef.name + ' status is ' + reqDef.expectedStatus]: function (r) { return isResponseStatusExpected(r, effectiveExpectedStatus); },
-    [reqDef.name + ' response time < ' + responseThresholdMs + 'ms']: function (r) { return r.timings.duration < responseThresholdMs; },
+    [reqDef.name + ' status is ' + reqDef.expectedStatus]: function () { return statusCheckPassed; },
+    [reqDef.name + ' response time < ' + responseThresholdMs + 'ms']: function () { return responseTimeCheckPassed; },
   });
+  // A failing check is a WARNING (a validation the response didn't meet),
+  // never an ERROR — errors are reserved for actual 4xx/5xx failures below.
+  if (!statusCheckPassed) {
+    console.warn(reqDef.name + ' validation warning: expected status ' + reqDef.expectedStatus + ' but got ' + res.status);
+  }
+  if (!responseTimeCheckPassed) {
+    console.warn(reqDef.name + ' validation warning: response time ' + res.timings.duration + 'ms exceeded ' + responseThresholdMs + 'ms');
+  }
 
-  recordCustomMetrics(res, SCENARIO_NAME, reqDef.name, path, getByteLength(payload || ''), reqDef.name, effectiveExpectedStatus);
+  recordCustomMetrics(res, SCENARIO_NAME, reqDef.name, path, getByteLength(payload || ''), reqDef.name, reqDef.expectedStatus);
 
-  if (res.status >= 400 && !isResponseStatusExpected(res, effectiveExpectedStatus)) {
+  // Rule 8(a) — EVERY 4xx/5xx is unconditionally a real failure, logged as an
+  // ERROR. No per-endpoint or per-method tolerance; isResponseStatusExpected
+  // above is used only for the check()/WARNING label, never here.
+  if (res.status >= 400) {
     const responseBody = String(res.body || '').substring(0, 800);
     const responseHeaders = JSON.stringify(res.headers || {});
     console.error(reqDef.name + ' failed: ' + res.status + ' body=' + responseBody + ' headers=' + responseHeaders);
@@ -795,6 +848,17 @@ ${useCsvCredentials ? `
     });
     sleep(1);
   }
+
+  // Force-flush this iteration's buffered InfluxDB lines NOW, at the end of
+  // every iteration — do NOT rely on teardown() for this. teardown() runs in
+  // its own fresh VU context in k6 (see InfluxDB block above), so it can only
+  // ever flush an empty buffer of its own; it can never reach the buffer this
+  // VU actually accumulated. Without an explicit flush here, up to
+  // INFLUX_FLUSH_THRESHOLD-1 trailing requestsRaw points are silently dropped
+  // every time a VU's last iteration ends mid-batch — which is exactly why a
+  // script's own k6_http_reqs_total counter (in-memory, always exact) can end
+  // up higher than the request count the report derives from requestsRaw.
+  flushInfluxLines();
 }
 
 MANDATORY — always close the pattern with a default export that delegates to
@@ -824,6 +888,7 @@ async function streamHarness(
   useCsvCredentials: boolean,
   userMessage: string,
   sendEvent: (type: string, data: any) => void,
+  validationConfig: ValidationConfig | null,
 ): Promise<string> {
   let stream: Awaited<ReturnType<Anthropic['messages']['stream']>> | null = null;
   for (let attempt = 0; attempt < MAX_STREAM_ATTEMPTS; attempt++) {
@@ -831,7 +896,7 @@ async function streamHarness(
       stream = await getAnthropicClient().messages.stream({
         model: CLAUDE_MODEL,
         max_tokens: 16000,
-        system: buildHarSystemPrompt(baseUrl, loadProfile, totalCalls, hasLogin, useCsvCredentials),
+        system: buildHarSystemPrompt(baseUrl, loadProfile, totalCalls, hasLogin, useCsvCredentials, validationConfig),
         messages: [{ role: 'user', content: userMessage }],
       });
       break;
@@ -882,6 +947,8 @@ router.post('/har-generate', upload.any(), async (req: Request, res: Response) =
 
   let loadProfile: LoadProfileConfig | null = null;
   try { loadProfile = req.body.loadProfile ? JSON.parse(req.body.loadProfile) : null; } catch { /* ignore */ }
+  let validationConfig: ValidationConfig | null = null;
+  try { validationConfig = req.body.validationConfig ? JSON.parse(req.body.validationConfig) : null; } catch { /* ignore */ }
   const useCsvCredentials = req.body.useCsvCredentials === true || req.body.useCsvCredentials === 'true';
   const credentialBatchId: string | undefined = req.body.credentialBatchId;
 
@@ -996,12 +1063,12 @@ const CAPTURED_REQUESTS = ${JSON.stringify(replayRequests)};`;
   try {
     sendEvent('status', { message: `Analyzing ${replayRequests.length} captured API calls with Claude…` });
 
-    let fullScript = await streamHarness(baseUrl, loadProfile, replayRequests.length, !!loginRequest, useCsvCredentials, userMessage, sendEvent);
+    let fullScript = await streamHarness(baseUrl, loadProfile, replayRequests.length, !!loginRequest, useCsvCredentials, userMessage, sendEvent, validationConfig);
     fullScript = injectCapturedData(fullScript, dataBlock);
 
     if (!isBraceBalanced(fullScript)) {
       sendEvent('status', { message: 'Generated script failed a structural check — retrying once…' });
-      fullScript = await streamHarness(baseUrl, loadProfile, replayRequests.length, !!loginRequest, useCsvCredentials, userMessage, sendEvent);
+      fullScript = await streamHarness(baseUrl, loadProfile, replayRequests.length, !!loginRequest, useCsvCredentials, userMessage, sendEvent, validationConfig);
       fullScript = injectCapturedData(fullScript, dataBlock);
 
       if (!isBraceBalanced(fullScript)) {

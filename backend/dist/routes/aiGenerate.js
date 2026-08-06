@@ -36,27 +36,21 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.autoFixScript = autoFixScript;
 const express_1 = require("express");
-const sdk_1 = __importDefault(require("@anthropic-ai/sdk"));
 const multer_1 = __importDefault(require("multer"));
 const XLSX = __importStar(require("xlsx"));
 const path = __importStar(require("path"));
+const anthropicClient_1 = require("../services/anthropicClient");
+const k6PromptBlocks_1 = require("../services/k6PromptBlocks");
+const credentialStore_1 = require("../services/credentialStore");
+const k6ScriptValidator_1 = require("../services/k6ScriptValidator");
 const router = (0, express_1.Router)();
-const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-// Build client lazily so it always reads the env vars after dotenv has run
-function getClient() {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    const authToken = process.env.ANTHROPIC_AUTH_TOKEN;
-    if (apiKey)
-        return new sdk_1.default({ apiKey });
-    if (authToken)
-        return new sdk_1.default({ authToken });
-    return new sdk_1.default({ apiKey: '' }); // will fail with clear auth error
-}
+const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 // Parse uploaded file into readable text content
-function parseFileToText(buffer, mimetype, originalname) {
+function parseFileToText(buffer, originalname) {
     const ext = path.extname(originalname).toLowerCase();
-    if (ext === '.csv' || ext === '.xls' || ext === '.xlsx') {
+    if (['.csv', '.xls', '.xlsx'].includes(ext)) {
         const workbook = XLSX.read(buffer, { type: 'buffer' });
         const results = [];
         workbook.SheetNames.forEach(sheetName => {
@@ -75,203 +69,123 @@ function parseFileToText(buffer, mimetype, originalname) {
             return buffer.toString('utf8');
         }
     }
-    // YAML, TXT, or any other text format
+    // YAML, TXT, HAR, or any other text format — pass through as-is
     return buffer.toString('utf8');
 }
-// Build the system prompt for K6 generation
-function buildSystemPrompt(testType, complexity) {
+// Test case files (CSV/XLSX/JSON/pasted text) often list full URLs per row.
+// Pull the origin out of the first absolute URL we find so the AI uses it as BASE_URL.
+function detectBaseUrl(content) {
+    const match = content.match(/https?:\/\/[^\s"'`,)]+/);
+    if (!match)
+        return null;
+    try {
+        return new URL(match[0]).origin;
+    }
+    catch {
+        return null;
+    }
+}
+function describeBaseUrl(baseUrl) {
+    if (!baseUrl)
+        return '';
+    return `\nMANDATORY BASE_URL — the uploaded test case data references "${baseUrl}". Use this as the BASE_URL default (see rule 4 and the InfluxDB integration block below) — do NOT default to localhost.\n`;
+}
+function describeLoadProfile(profile) {
+    if (!profile)
+        return '';
+    if (profile.profileType === 'constant') {
+        return `\nMANDATORY LOAD PROFILE — the user explicitly configured this; use it exactly, do not invent your own:
+- Constant load: ${profile.constantVus ?? 10} VUs for ${profile.constantDuration ?? '1m'}.
+- Every scenario's executor must be 'constant-vus' with vus: ${profile.constantVus ?? 10} and duration: '${profile.constantDuration ?? '1m'}'.\n`;
+    }
+    const stages = profile.stages && profile.stages.length > 0
+        ? profile.stages
+        : [{ target: 10, duration: '2m' }, { target: 10, duration: '5m' }, { target: 0, duration: '2m' }];
+    const stagesList = stages.map(s => `    { target: ${s.target}, duration: '${s.duration}' },`).join('\n');
+    return `\nMANDATORY LOAD PROFILE — the user explicitly configured this; use it exactly, do not invent your own:
+- Ramping load with these exact stages (every scenario's executor must be 'ramping-vus' using this stages array verbatim):
+  stages: [
+${stagesList}
+  ]\n`;
+}
+function describeEnvVarKeys(keys) {
+    if (!keys.length)
+        return '';
+    return `\nADDITIONAL ENV VARS — the user pre-declared these names; reference any that are relevant via __ENV.<NAME> (e.g. auth tokens, tenant ids) instead of hardcoding values: ${keys.join(', ')}\n`;
+}
+function describeSpecContext(ctx) {
+    if (!ctx)
+        return '';
+    const lines = ['\nTEST SUITE CONTEXT — from the Test Authoring form. Test case data takes priority for'];
+    lines.push('per-row specifics; use this to fill in anything the test case data leaves unspecified:');
+    lines.push(`- Test Name: ${ctx.name || '(untitled)'}`);
+    if (ctx.description)
+        lines.push(`- Description: ${ctx.description}`);
+    if (ctx.tags?.length)
+        lines.push(`- Tags: ${ctx.tags.join(', ')}`);
+    if (ctx.request) {
+        const r = ctx.request;
+        lines.push(`- Default request: ${r.method} ${r.url}`);
+        if (r.headers?.length) {
+            lines.push(`  Headers: ${r.headers.map(h => `${h.key}: ${h.value}`).join(', ')}`);
+        }
+        if (r.payload)
+            lines.push(`  Payload template: ${r.payload}`);
+        if (r.auth && r.auth.type !== 'none') {
+            lines.push(`  Auth: ${r.auth.type}${r.auth.tokenSecret ? ` — secret name __ENV.${r.auth.tokenSecret}` : ''}${r.auth.headerName ? `, header "${r.auth.headerName}"` : ''}`);
+        }
+    }
+    const checks = (ctx.checks ?? []).filter(c => c && c.trim());
+    if (checks.length) {
+        lines.push(`- MANDATORY checks (every request must include check() assertions covering these — VALIDATIONS ONLY per rule 8(b): a failing one is a console.warn() WARNING, never an error, and never gates pass/fail): ${checks.join(' | ')}`);
+    }
+    const thresholdEntries = Object.entries(ctx.thresholds ?? {});
+    if (thresholdEntries.length) {
+        const rendered = thresholdEntries.map(([metric, conds]) => `${metric}: ${conds.map(c => c.condition).join(', ')}`).join(' | ');
+        lines.push(`- MANDATORY thresholds (SLA/SLO — the pass/fail gate for the run per rule 11; use these exact conditions in options.thresholds instead of the defaults in rule 11 — still apply rule 11's {endpoint_type:app} key scope when the metric is http_req_duration or http_req_failed, e.g. condition "rate<0.01" on "http_req_failed" becomes 'http_req_failed{endpoint_type:app}': ['rate<0.01']; never scope 'checks' or a custom metric, and never add a 'checks' threshold): ${rendered}`);
+    }
+    if (ctx.slos?.length) {
+        const rendered = ctx.slos.map((s) => `${s.label || s.metric} ${s.operator === 'lte' ? '<=' : '>='} ${s.target}${s.unit || ''}`).join(' | ');
+        lines.push(`- SLO/SLA targets (reflect these in thresholds where the metric maps to a k6 threshold, e.g. p95/error rate): ${rendered}`);
+    }
+    return lines.join('\n') + '\n';
+}
+function buildSystemPrompt(testType, complexity, loadProfile, envVarKeys, baseUrl, specContext, useCsvCredentials, hasModuleRecordAccessCall) {
     return `You are an expert performance engineer specializing in k6 load testing with InfluxDB v2 integration. Analyze the provided test case data and generate a complete, production-ready k6 JavaScript script.
 
 Test Type: ${testType}
 Complexity: ${complexity}
+${describeLoadProfile(loadProfile)}${describeEnvVarKeys(envVarKeys)}${describeBaseUrl(baseUrl)}${describeSpecContext(specContext)}
 
 MANDATORY RULES — every rule must be followed exactly:
 1. Output ONLY valid JavaScript — no markdown, no code fences, no explanation text.
-2. Start with imports, end with handleSummary export.
+2. Start with imports, end with handleSummary export. Import fail from 'k6' (e.g. import { check, group, sleep, fail } from 'k6';) whenever the script uses fail() — the AUTHENTICATION PATTERN below (both the generic and CSV-based variants) calls fail() when a login/session is missing or a login request fails, and omitting the import crashes the ENTIRE script with "fail is not defined" the moment that path is hit, aborting every VU instead of failing just that one login attempt.
 3. Include the full InfluxDB v2 integration block shown below, word for word.
-4. Use __ENV.BASE_URL (default 'http://localhost:3000') for all request base URLs.
+4. Use __ENV.BASE_URL for all request base URLs, defaulting to ${baseUrl ? `'${baseUrl}' (see MANDATORY BASE_URL above — this came from the uploaded test case data, do NOT use localhost)` : `'http://localhost:3000'`}.
 5. All secrets and tokens use __ENV.VAR_NAME — never hardcoded values.
 6. Every HTTP request is wrapped in a named group().
 7. Every endpoint has its own Trend metric (e.g. loginTrend, createOrderTrend).
-8. Every request has check() for status code AND response time.
+8. PASS/FAIL POLICY — MANDATORY: (a) EVERY 4xx/5xx response status is ALWAYS a real failure, unconditionally — no per-endpoint or per-status tolerance. Do NOT set a responseCallback param on any request; leave it unset so k6's own default (status >= 400 = failed) applies. Do NOT write a custom responseCallback function — it is not a supported value in this k6 build and fails every request outright with "unsupported responseCallback" (status 0, connection never attempted). (b) Every request still has check() for status code AND response time (using isResponseStatusExpected() from the InfluxDB block below for the status label) — these are informational Validations only (see Section D "Checks" in the test case data, when present) and must NEVER be wired into a responseCallback or otherwise change whether a response counts as a failure. A failing check must be logged via console.warn() (a WARNING), never console.error() — console.error() is reserved for the unconditional 4xx/5xx failure log required by (a).
 9. Include sleep(1) between logical steps within an iteration.
-10. Use options.scenarios with ramping-vus executor and explicit exec function names.
-11. Set thresholds from test case data or sensible defaults (p(95)<800, rate<0.05).
+10. Declare 'export const options = { scenarios: {...}, thresholds: {...} };' EXACTLY ONCE, using 'const' (never 'let'/'var') — a script with more than one export named 'options' fails to load entirely with "Duplicate export name 'options'" before any request runs. Use options.scenarios with ramping-vus executor and explicit exec function names, and put thresholds in that SAME object literal — never a second options block later.
+11. options.thresholds is the SLA/SLO pass/fail gate for the WHOLE RUN — breaching one fails the test. Set thresholds from test case data or sensible defaults: 'http_req_duration{endpoint_type:app}': ['p(95)<800'], 'http_req_failed{endpoint_type:app}': ['rate<0.05']. The {endpoint_type:app} tag scope on http_req_duration/http_req_failed is MANDATORY (never on 'checks' or a custom Trend/Counter metric) — every request under test must include endpoint_type: 'app' in its own tags object (alongside whatever other tags rule 6/7 already require), while the InfluxDB write/precheck calls in the InfluxDB block below are deliberately left without that tag. This scoping keeps InfluxDB's own HTTP traffic (writes, bucket/org lookups) from ever counting toward the test's pass/fail thresholds or error rate — an InfluxDB hiccup must never fail the test on its own. If test case data specifies its own threshold condition for http_req_duration or http_req_failed, keep the condition exactly as given but still apply the {endpoint_type:app} key scope. Do NOT add a 'checks' entry to options.thresholds — checks are validations only (rule 8(b)) and must never gate pass/fail.
 12. SCENARIO_MAX_VUS must be computed with Math.max and ?? (not ||): const SCENARIO_MAX_VUS = Math.max(...Object.values(options.scenarios).flatMap(s => (s.stages||[]).map(st => st.target ?? 0)), 1);
 13. Auth tokens: extract defensively — const token = (body.token ?? body.sessionToken ?? body.access_token ?? (body.data && body.data.token) ?? '');
 14. All test data that must be unique per VU/iteration (names, emails, usernames) must embed __VU and __ITER: e.g. 'user_' + __VU + '_' + __ITER + '@example.com'.
 15. Use ?? instead of || when the right-hand side is a fallback for null/undefined (stage.target ?? 0, not stage.target || 0).
 16. handleSummary must output ONLY stdout — do NOT write any file (no summary.json).
+17. ${useCsvCredentials
+        ? 'Login credentials come from an uploaded CSV pool (one login per VU) — see the CSV-BASED PER-VU CREDENTIALS pattern below. This is MANDATORY: do not write a shared setup() login for this script; every VU must authenticate independently via ensureAuth(), and the getVuCredential()/ensureAuth()/reauth() helper functions from that pattern must be reproduced verbatim, including the REQUIRED InstanceName field in the login payload — do not simplify, rename, or omit it. RE-AUTH ON 401/403 IS MANDATORY: reauth() must be called on a 401/403 response and the SAME request retried exactly once with the refreshed headers — never treat a 401/403 as a silent pass, and never retry more than once (a second consecutive 401/403 is a real failure).'
+        : 'If the test cases require authentication (a login/token endpoint), perform the login ONCE in setup() — never per-VU or per-iteration — and pass the resulting session token to exec functions via setup()\'s return value. See AUTHENTICATION PATTERN below; this is mandatory whenever a login step exists, to avoid concurrent-login failures under load. RE-AUTH ON 401/403 IS ALSO MANDATORY — reproduce the reauthenticate() helper and the retry-once-on-401/403 pattern shown in AUTHENTICATION PATTERN below verbatim; a 401/403 must never be silently treated as a pass, and never retried more than once.'}
+${hasModuleRecordAccessCall ? `18. GetModuleRecordAccess CSRF PROPAGATION IS MANDATORY — the .../api/internal/Permission/GetModuleRecordAccess call's response carries a 'csrf-token' response header. Capture that exact header value into a variable right after that call, and send it as the 'x-csrf-token' request header on every authenticated call made AFTER it (not on GetModuleRecordAccess itself, and not a hardcoded/captured literal). See the GetModuleRecordAccess HEADER PATTERN block below for the required header shape on the call itself and the exact capture/propagation code. CSRF REFRESH ON REAUTH IS ALSO MANDATORY — a csrf token is bound to the session that produced it, so whichever reauth()/reauthenticate() helper rule 17 requires MUST also re-issue GetModuleRecordAccess and re-capture a fresh csrf token before the caller retries the original failed request — otherwise the retry sends a (new session, old csrf) pair, which Archer's classic /api/* gateway rejects with a generic IIS 403 that looks like a permissions error but is actually this exact mismatch. See the CSRF REFRESH ON REAUTH section of the GetModuleRecordAccess HEADER PATTERN block below.` : ''}
 
-════════════════════════════════════════════════════════════════
-INFLUXDB INTEGRATION — EMBED THIS BLOCK EXACTLY IN EVERY SCRIPT
-════════════════════════════════════════════════════════════════
-
-After imports, declare env vars and metrics:
-
-const TEST_ID = __ENV.TESTID || ('local-' + Date.now());
-const RUN_ID = __ENV.RUN_ID || ('PerfOps-' + Date.now());
-const NODE_NAME = __ENV.NODE_NAME || 'PerfOps';
-const TEST_NAME = __ENV.TEST_NAME || '<derive from test cases>';
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
-const INFLUX_V2_URL = __ENV.INFLUX_V2_URL || 'http://localhost:8086';
-const INFLUX_V2_ORG = __ENV.INFLUX_V2_ORG || '';
-const INFLUX_V2_ORG_ID = __ENV.INFLUX_V2_ORG_ID || '';
-const INFLUX_V2_BUCKET = __ENV.INFLUX_V2_BUCKET || 'PerfDB';
-const INFLUX_V2_TOKEN = __ENV.INFLUX_V2_TOKEN || '';
-const INFLUX_V2_AUTO_CREATE_BUCKET = (__ENV.INFLUX_V2_AUTO_CREATE_BUCKET || 'false').toLowerCase() === 'true';
-const INFLUX_V2_ENABLED = !!(INFLUX_V2_ORG && INFLUX_V2_BUCKET && INFLUX_V2_TOKEN);
-
-const k6HttpReqsTotal = new Counter('k6_http_reqs_total');
-const k6HttpReqFailedTotal = new Counter('k6_http_req_failed_total');
-const k6IterationsTotal = new Counter('k6_iterations_total');
-const k6HttpReqDurationSeconds = new Trend('k6_http_req_duration_seconds');
-const k6Vus = new Gauge('k6_vus');
-const k6VusMax = new Gauge('k6_vus_max');
-const k6DataSentBytesTotal = new Counter('k6_data_sent_bytes_total');
-const k6DataReceivedBytesTotal = new Counter('k6_data_received_bytes_total');
-
-Add these helper functions before setup():
-
-function getByteLength(value) {
-  if (value === null || value === undefined) return 0;
-  return String(value).length;
-}
-function escapeTagValue(value) {
-  return String(value)
-    .replace(/\\\\/g, '\\\\\\\\')
-    .replace(/,/g, '\\\\,')
-    .replace(/ /g, '\\\\ ')
-    .replace(/=/g, '\\\\=');
-}
-function normalizeTagText(value, maxLength) {
-  if (value === null || value === undefined) return undefined;
-  const s = String(value).replace(/\\s+/g, ' ').trim();
-  if (!s) return undefined;
-  return s.length > maxLength ? s.slice(0, maxLength) : s;
-}
-function buildInfluxTagSet(tags) {
-  return Object.entries(tags)
-    .filter(function(e) { return e[1] !== undefined && e[1] !== null; })
-    .map(function(e) { return e[0] + '=' + escapeTagValue(e[1]); })
-    .join(',');
-}
-function getErrorDetails(response, failed) {
-  const responseCode = String(response.status);
-  if (!failed) return { responseCode: responseCode };
-  let errorMessage;
-  try {
-    const b = response.json();
-    errorMessage = b && (b.message || b.error || b.title || b.detail);
-  } catch(e) { errorMessage = undefined; }
-  return {
-    responseCode: responseCode,
-    errorMessage: normalizeTagText(errorMessage || response.error || response.status_text || ('HTTP ' + response.status), 256),
-  };
-}
-function getInfluxAuthHeaders() {
-  return { Authorization: 'Token ' + INFLUX_V2_TOKEN, Accept: 'application/json' };
-}
-function ensureInfluxBucket() {
-  if (!INFLUX_V2_ENABLED) return;
-  let orgId = INFLUX_V2_ORG_ID;
-  if (!orgId) {
-    const r = http.get(INFLUX_V2_URL + '/api/v2/orgs', { headers: getInfluxAuthHeaders(), tags: { api: 'influx-v2-orgs', step: 'metrics-precheck', name: 'GET /api/v2/orgs' } });
-    if (r.status < 200 || r.status >= 300) throw new Error('Cannot reach InfluxDB org "' + INFLUX_V2_ORG + '". HTTP ' + r.status + '. Set INFLUX_V2_ORG_ID to skip this lookup.');
-    let body; try { body = r.json(); } catch(e) { throw new Error('InfluxDB org lookup returned non-JSON'); }
-    const orgs = body.orgs || [];
-    const found = orgs.find(function(o) { return String(o.name).toLowerCase() === String(INFLUX_V2_ORG).toLowerCase(); });
-    if (!found) throw new Error('InfluxDB org "' + INFLUX_V2_ORG + '" not found. Set INFLUX_V2_ORG_ID to bypass lookup.');
-    orgId = found.id;
-  }
-  const br = http.get(INFLUX_V2_URL + '/api/v2/buckets?orgID=' + encodeURIComponent(orgId) + '&name=' + encodeURIComponent(INFLUX_V2_BUCKET), { headers: getInfluxAuthHeaders(), tags: { api: 'influx-v2-buckets', step: 'metrics-precheck', name: 'GET /api/v2/buckets' } });
-  let bucketExists = false;
-  if (br.status === 404) { bucketExists = false; }
-  else if (br.status >= 200 && br.status < 300) {
-    let bb; try { bb = br.json(); } catch(e) { throw new Error('InfluxDB bucket lookup returned non-JSON'); }
-    bucketExists = (bb.buckets || []).some(function(b) { return b.name === INFLUX_V2_BUCKET; });
-  } else { throw new Error('Cannot verify bucket "' + INFLUX_V2_BUCKET + '". HTTP ' + br.status); }
-  if (bucketExists) return;
-  if (!INFLUX_V2_AUTO_CREATE_BUCKET) throw new Error('Bucket "' + INFLUX_V2_BUCKET + '" does not exist. Set INFLUX_V2_AUTO_CREATE_BUCKET=true to create it.');
-  const cr = http.post(INFLUX_V2_URL + '/api/v2/buckets', JSON.stringify({ orgID: orgId, name: INFLUX_V2_BUCKET, retentionRules: [] }), { headers: { Authorization: 'Token ' + INFLUX_V2_TOKEN, Accept: 'application/json', 'Content-Type': 'application/json' }, tags: { api: 'influx-v2-buckets', step: 'metrics-precheck', name: 'POST /api/v2/buckets' } });
-  if (cr.status !== 200 && cr.status !== 201) throw new Error('Failed to create bucket "' + INFLUX_V2_BUCKET + '". HTTP ' + cr.status);
-}
-function writeInfluxLines(lines) {
-  if (!INFLUX_V2_ENABLED || lines.length === 0) return;
-  http.post(
-    INFLUX_V2_URL + '/api/v2/write?org=' + encodeURIComponent(INFLUX_V2_ORG) + '&bucket=' + encodeURIComponent(INFLUX_V2_BUCKET) + '&precision=ns',
-    lines.join('\\n'),
-    { headers: { Authorization: 'Token ' + INFLUX_V2_TOKEN, 'Content-Type': 'text/plain; charset=utf-8' }, tags: { api: 'influx-v2-write', step: 'metrics-publish', name: 'POST /api/v2/write' } }
-  );
-}
-function buildMetricTagSet(t) {
-  return 'testid=' + escapeTagValue(t.testid) + ',scenario=' + escapeTagValue(t.scenario) + ',api=' + escapeTagValue(t.api) + ',url=' + escapeTagValue(t.url) + ',status=' + escapeTagValue(t.status);
-}
-function recordCustomMetrics(response, scenario, apiTag, urlPath, sentBytes, requestName) {
-  const failed = response.status >= 400 ? 1 : 0;
-  const ts = String(Date.now()) + '000000';
-  const mTags = { testid: TEST_ID, scenario: scenario, api: apiTag, url: urlPath, status: String(response.status) };
-  const tagSet = buildMetricTagSet(mTags);
-  const ed = getErrorDetails(response, failed);
-  const refTags = buildInfluxTagSet({ requestName: requestName, samplerType: 'request', runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, result: failed ? 'fail' : 'pass', responseCode: ed.responseCode, errorMessage: ed.errorMessage });
-  const txTags = buildInfluxTagSet({ requestName: requestName, samplerType: 'transaction', runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, result: failed ? 'fail' : 'pass', responseCode: ed.responseCode, errorMessage: ed.errorMessage });
-  k6HttpReqsTotal.add(1, mTags);
-  if (failed) k6HttpReqFailedTotal.add(1, mTags);
-  k6HttpReqDurationSeconds.add(response.timings.duration / 1000, mTags);
-  k6DataSentBytesTotal.add(sentBytes, mTags);
-  k6DataReceivedBytesTotal.add(getByteLength(response.body), mTags);
-  writeInfluxLines([
-    'k6_http_reqs_total,' + tagSet + ' value=1i ' + ts,
-    'k6_http_req_failed_total,' + tagSet + ' value=' + failed + 'i ' + ts,
-    'k6_http_req_duration_seconds,' + tagSet + ' value=' + (response.timings.duration / 1000) + ' ' + ts,
-    'k6_data_sent_bytes_total,' + tagSet + ' value=' + sentBytes + 'i ' + ts,
-    'k6_data_received_bytes_total,' + tagSet + ' value=' + getByteLength(response.body) + 'i ' + ts,
-    'requestsRaw,' + refTags + ' responseTime=' + response.timings.duration + ',errorCount=' + failed + 'i,count=1i ' + ts,
-    'requestsRaw,' + txTags + ' responseTime=' + response.timings.duration + ',errorCount=' + failed + 'i,count=1i ' + ts,
-  ]);
-}
-
-setup() and teardown() — write these exactly:
-
-export function setup() {
-  if (INFLUX_V2_ENABLED) { ensureInfluxBucket(); }
-  k6VusMax.add(SCENARIO_MAX_VUS, { testid: TEST_ID });
-  const ts = String(Date.now()) + '000000';
-  writeInfluxLines([
-    'testStartEnd,' + buildInfluxTagSet({ runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, type: 'started' }) + ' value=1i ' + ts,
-    'k6_vus_max,testid=' + escapeTagValue(TEST_ID) + ' value=' + SCENARIO_MAX_VUS + 'i ' + ts,
-  ]);
-  return null;
-}
-export function teardown() {
-  const ts = String(Date.now()) + '000000';
-  writeInfluxLines([
-    'testStartEnd,' + buildInfluxTagSet({ runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, type: 'finished' }) + ' value=1i ' + ts,
-  ]);
-}
-
-At the START of every exec function iteration (NOT export default), add:
-
-  const _ts = String(Date.now()) + '000000';
-  k6IterationsTotal.add(1, { testid: TEST_ID, scenario: SCENARIO_NAME });
-  k6Vus.add(1, { testid: TEST_ID, scenario: SCENARIO_NAME, vu: String(__VU) });
-  writeInfluxLines([
-    'k6_iterations_total,testid=' + escapeTagValue(TEST_ID) + ',scenario=' + escapeTagValue(SCENARIO_NAME) + ' value=1i ' + _ts,
-    'k6_vus,testid=' + escapeTagValue(TEST_ID) + ',scenario=' + escapeTagValue(SCENARIO_NAME) + ',vu=' + escapeTagValue(__VU) + ' value=1 ' + _ts,
-    'virtualUsers,' + buildInfluxTagSet({ runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, scenario: SCENARIO_NAME }) + ' meanActiveThreads=1,finishedThreads=' + __ITER + ' ' + _ts,
-  ]);
-
-After EVERY http call, immediately call:
-  recordCustomMetrics(res, SCENARIO_NAME, '<api-tag>', '<url-path>', getByteLength(payload || ''), '<Step Name>');
-
-handleSummary — output ONLY stdout, no file writes:
-export function handleSummary(data) {
-  return { stdout: textSummary(data, { indent: ' ', enableColors: true }) };
-}
-
+${(0, k6PromptBlocks_1.buildInfluxBlock)(baseUrl)}
+${useCsvCredentials ? (0, k6PromptBlocks_1.buildCsvCredentialAuthPatternBlock)() : (0, k6PromptBlocks_1.buildGenericAuthPatternBlock)()}
+${hasModuleRecordAccessCall ? (0, k6PromptBlocks_1.buildModuleRecordAccessPatternBlock)() : ''}
+${k6PromptBlocks_1.HANDLE_SUMMARY_BLOCK}
 ════════════════════════════════════════════════════════════════
 
-TEST TYPE LOAD SHAPES:
+TEST TYPE LOAD SHAPES (fallback only — ignore this section if a MANDATORY LOAD PROFILE was given above; that one wins):
 - "Smoke Test": 1-3 VUs, 1m duration
 - "Load Test": ramp 2m → sustain 8m → ramp-down 2m
 - "Stress Test": ramp to 2× normal, sustain 5m, find breaking point
@@ -288,40 +202,67 @@ Generate the k6 script now. Output ONLY JavaScript, starting with the first impo
 }
 // POST /api/ai-generate — streaming SSE endpoint
 router.post('/ai-generate', upload.single('file'), async (req, res) => {
-    const { testType, complexity, pastedContent } = req.body;
-    const hasAuth = process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN;
-    if (!hasAuth) {
+    const { testType, complexity, pastedContent, loadProfile: loadProfileRaw, envVarKeys: envVarKeysRaw, specContext: specContextRaw, useCsvCredentials: useCsvCredentialsRaw, credentialBatchId } = req.body;
+    let loadProfile = null;
+    try {
+        loadProfile = loadProfileRaw ? JSON.parse(loadProfileRaw) : null;
+    }
+    catch { }
+    let envVarKeys = [];
+    try {
+        envVarKeys = envVarKeysRaw ? JSON.parse(envVarKeysRaw) : [];
+    }
+    catch { }
+    let specContext = null;
+    try {
+        specContext = specContextRaw ? JSON.parse(specContextRaw) : null;
+    }
+    catch { }
+    const useCsvCredentials = useCsvCredentialsRaw === true || useCsvCredentialsRaw === 'true';
+    let csvCredentials = [];
+    if (useCsvCredentials) {
+        if (typeof credentialBatchId !== 'string' || !credentialBatchId.trim()) {
+            res.status(422).json({
+                error: 'CSV-based credentials were requested but no credential batch was uploaded. Upload a login credentials CSV before generating the script.',
+            });
+            return;
+        }
+        csvCredentials = await (0, credentialStore_1.fetchScriptCredentials)(credentialBatchId);
+        if (csvCredentials.length === 0) {
+            res.status(422).json({
+                error: 'The uploaded credentials CSV/batch resolved to zero usable rows (check that it has URL, Username, Password, and InstanceName columns). Re-upload a valid credentials file.',
+            });
+            return;
+        }
+    }
+    if (!(0, anthropicClient_1.hasAnthropicCredentials)()) {
         res.status(500).json({
             error: 'Anthropic API credentials not configured. Set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) in backend/.env or as an environment variable.',
         });
         return;
     }
-    // Get content to analyze
+    if (!req.file && !pastedContent) {
+        res.status(400).json({ error: 'No file or content provided' });
+        return;
+    }
+    // Parse the uploaded file into text Claude can read
     let fileContent = '';
     if (req.file) {
         try {
-            fileContent = parseFileToText(req.file.buffer, req.file.mimetype, req.file.originalname);
+            fileContent = parseFileToText(req.file.buffer, req.file.originalname);
         }
         catch (err) {
             res.status(400).json({ error: `Failed to parse file: ${err.message}` });
             return;
         }
     }
-    else if (pastedContent) {
+    else {
         fileContent = pastedContent;
     }
-    else {
-        res.status(400).json({ error: 'No file or content provided' });
-        return;
-    }
-    const userMessage = `Here are the test cases to analyze and convert into a k6 performance test script:
-
-\`\`\`
-${fileContent}
-\`\`\`
-
-Generate a ${testType} k6 script at ${complexity} complexity level based on these test cases. Output ONLY the JavaScript code.`;
-    // Set up SSE headers for streaming
+    const detectedBaseUrl = detectBaseUrl(fileContent) ?? detectBaseUrl(specContext?.request?.url ?? '');
+    const hasModuleRecordAccessCall = /GetModuleRecordAccess/i.test(fileContent)
+        || /GetModuleRecordAccess/i.test(specContext?.request?.url ?? '');
+    const userMessage = `Here are the test cases to analyze and convert into a k6 performance test script:\n\n\`\`\`\n${fileContent}\n\`\`\`\n\nGenerate a ${testType} k6 script at ${complexity} complexity level based on these test cases. Output ONLY the JavaScript code.`;
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -331,13 +272,29 @@ Generate a ${testType} k6 script at ${complexity} complexity level based on thes
         res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
     };
     try {
-        sendEvent('status', { message: `Analyzing ${req.file ? req.file.originalname : 'content'} with Claude...` });
-        const stream = await getClient().messages.stream({
-            model: 'claude-opus-4-8',
-            max_tokens: 8096,
-            system: buildSystemPrompt(testType || 'Load Test', complexity || 'Standard'),
-            messages: [{ role: 'user', content: userMessage }],
-        });
+        sendEvent('status', { message: `Analyzing ${req.file ? req.file.originalname : 'content'} with Claude…` });
+        let stream = null;
+        for (let attempt = 0; attempt < anthropicClient_1.MAX_STREAM_ATTEMPTS; attempt++) {
+            try {
+                stream = await (0, anthropicClient_1.getAnthropicClient)().messages.stream({
+                    model: anthropicClient_1.CLAUDE_MODEL,
+                    max_tokens: 16000,
+                    system: buildSystemPrompt(testType || 'Load Test', complexity || 'Standard', loadProfile, envVarKeys, detectedBaseUrl, specContext, useCsvCredentials, hasModuleRecordAccessCall),
+                    messages: [{ role: 'user', content: userMessage }],
+                });
+                break;
+            }
+            catch (err) {
+                if ((0, anthropicClient_1.isOverloadedError)(err) && attempt < anthropicClient_1.MAX_STREAM_ATTEMPTS - 1) {
+                    sendEvent('status', { message: `Claude is currently overloaded — retrying (${attempt + 1}/${anthropicClient_1.MAX_STREAM_ATTEMPTS - 1})…` });
+                    await new Promise(r => setTimeout(r, anthropicClient_1.STREAM_BACKOFF_MS[attempt]));
+                    continue;
+                }
+                throw err;
+            }
+        }
+        if (!stream)
+            throw new Error('Failed to start generation after retries');
         let fullScript = '';
         for await (const chunk of stream) {
             if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
@@ -346,23 +303,191 @@ Generate a ${testType} k6 script at ${complexity} complexity level based on thes
                 sendEvent('chunk', { text });
             }
         }
-        // Strip any accidental markdown code fences
-        fullScript = fullScript
-            .replace(/^```(?:javascript|js)?\n?/m, '')
-            .replace(/\n?```\s*$/m, '')
-            .trim();
+        fullScript = (0, anthropicClient_1.stripCodeFences)(fullScript);
+        // Bake the real uploaded CSV rows into the script now, rather than leaving
+        // the CREDENTIALS placeholder for execution time — the credentials are
+        // part of the generated script, not something spliced in later.
+        if (useCsvCredentials && csvCredentials.length > 0) {
+            fullScript = (0, k6PromptBlocks_1.injectCredentials)(fullScript, csvCredentials);
+        }
         sendEvent('complete', { script: fullScript });
         res.end();
     }
     catch (err) {
+        if (err.name === 'AbortError') {
+            res.end();
+            return;
+        }
         if (err.status === 401) {
             sendEvent('error', { message: 'Invalid Anthropic API key. Check your ANTHROPIC_API_KEY.' });
         }
         else if (err.status === 429) {
             sendEvent('error', { message: 'Rate limit reached. Please wait a moment and try again.' });
         }
+        else if ((0, anthropicClient_1.isOverloadedError)(err)) {
+            sendEvent('error', { message: "Claude's servers are overloaded right now. We retried a few times but it didn't recover — please try again in a minute." });
+        }
         else {
             sendEvent('error', { message: err.message || 'AI generation failed' });
+        }
+        res.end();
+    }
+});
+function buildRefineSystemPrompt(hasCapturedData) {
+    return `You are an expert performance engineer specializing in k6 load testing with InfluxDB v2 integration. You are given an existing k6 JavaScript script and a follow-up instruction describing a change the user wants made to it.
+
+MANDATORY RULES:
+1. Output ONLY the full, updated valid JavaScript script — no markdown, no code fences, no explanation text.
+2. Apply the requested change precisely while preserving everything else in the script that the instruction doesn't ask you to touch.
+3. Keep the script fully self-contained and runnable (imports, InfluxDB integration block, handleSummary, etc. all preserved).
+4. If the instruction is ambiguous, make the most reasonable interpretation for a k6 performance test script rather than asking for clarification.
+${hasCapturedData ? `5. The script contains the line ${k6PromptBlocks_1.DATA_PLACEHOLDER} in place of the real captured-request data (removed to keep this prompt a reasonable size). Leave that exact placeholder line in your output — do NOT delete it, move it, or attempt to redeclare/transcribe LOGIN_REQUEST/CAPTURED_REQUESTS yourself; the real data is spliced back in automatically afterward.` : ''}
+6. THRESHOLD instructions (e.g. "Threshold for X changed/added/removed") refer to \`options.thresholds\` — this k6 script has EXACTLY ONE \`export const options = { ... }\` declaration (a second one fails to load with "Duplicate export name 'options'"). Locate that EXISTING \`thresholds\` object inside it and edit the matching key's condition array in place — do NOT add a second \`options\`/\`thresholds\` block, and do NOT touch unrelated threshold keys. If the metric key named in the instruction doesn't exist yet, add it as a new key in that SAME object.
+7. CHECK instructions (e.g. "Check added/removed: ...") refer to \`check()\` calls. Scripts in this app commonly define checks in ONE of two shapes — inspect the actual script to see which applies before editing:
+   (a) a single generic per-request check() (e.g. inside a shared \`replayStep()\`/\`doRequest()\` helper used for every captured call) — for a check ADD/REMOVE instruction here, modify that ONE shared check() block, since it already runs for every request; do not duplicate it per endpoint.
+   (b) separate per-endpoint check() calls (one inside each named exec function) — add/remove the assertion in EVERY such check() block consistently, matching the exact key-naming convention already used by the neighboring checks in that same script (e.g. if existing keys are template strings like \`[reqDef.name + ' status is ' + ...]\`, follow that same pattern rather than inventing a different style).
+   In both cases, never rename or restructure unrelated existing checks.
+
+Output ONLY JavaScript, starting with the first import line.`;
+}
+async function streamRefinement(scriptForPrompt, prompt, hasCapturedData, sendEvent) {
+    const userMessage = `Here is the current k6 script:\n\n\`\`\`javascript\n${scriptForPrompt}\n\`\`\`\n\nApply this change:\n"${prompt}"\n\nOutput ONLY the full updated JavaScript code.`;
+    let stream = null;
+    for (let attempt = 0; attempt < anthropicClient_1.MAX_STREAM_ATTEMPTS; attempt++) {
+        try {
+            stream = await (0, anthropicClient_1.getAnthropicClient)().messages.stream({
+                model: anthropicClient_1.CLAUDE_MODEL,
+                max_tokens: 16000,
+                system: buildRefineSystemPrompt(hasCapturedData),
+                messages: [{ role: 'user', content: userMessage }],
+            });
+            break;
+        }
+        catch (err) {
+            if ((0, anthropicClient_1.isOverloadedError)(err) && attempt < anthropicClient_1.MAX_STREAM_ATTEMPTS - 1) {
+                sendEvent('status', { message: `Claude is currently overloaded — retrying (${attempt + 1}/${anthropicClient_1.MAX_STREAM_ATTEMPTS - 1})…` });
+                await new Promise(r => setTimeout(r, anthropicClient_1.STREAM_BACKOFF_MS[attempt]));
+                continue;
+            }
+            throw err;
+        }
+    }
+    if (!stream)
+        throw new Error('Failed to start refinement after retries');
+    let fullScript = '';
+    for await (const chunk of stream) {
+        if (chunk.type === 'content_block_delta' && chunk.delta.type === 'text_delta') {
+            const text = chunk.delta.text;
+            fullScript += text;
+            sendEvent('chunk', { text });
+        }
+    }
+    return (0, anthropicClient_1.stripCodeFences)(fullScript);
+}
+// Non-streaming variant of the refine flow, callable server-side (e.g. by the
+// executor's auto-fix/retry loop in index.ts) rather than only from an SSE
+// route driven by a browser. Reuses the exact same strip/refine/re-inject/
+// brace-check pipeline as POST /api/ai-refine.
+async function autoFixScript(currentScript, instruction, onEvent) {
+    const extracted = (0, k6PromptBlocks_1.extractCapturedData)(currentScript);
+    const scriptAfterCapturedStrip = extracted ? extracted.strippedScript : currentScript;
+    const extractedCreds = (0, k6PromptBlocks_1.extractCredentials)(scriptAfterCapturedStrip);
+    const scriptForPrompt = extractedCreds ? extractedCreds.strippedScript : scriptAfterCapturedStrip;
+    const emit = onEvent ?? (() => { });
+    const reinject = (script) => {
+        let out = script;
+        if (extracted)
+            out = (0, k6PromptBlocks_1.injectCapturedData)(out, extracted.dataBlock);
+        if (extractedCreds)
+            out = (0, k6PromptBlocks_1.injectCredentialsBlock)(out, extractedCreds.dataBlock);
+        return out;
+    };
+    let fullScript = reinject(await streamRefinement(scriptForPrompt, instruction, !!extracted, emit));
+    if (!(0, k6ScriptValidator_1.isBraceBalanced)(fullScript)) {
+        emit('status', { message: 'Generated fix failed a structural check — retrying once…' });
+        fullScript = reinject(await streamRefinement(scriptForPrompt, instruction, !!extracted, emit));
+        if (!(0, k6ScriptValidator_1.isBraceBalanced)(fullScript)) {
+            throw new Error('Auto-fix produced a script with mismatched braces twice in a row.');
+        }
+    }
+    return fullScript;
+}
+// POST /api/ai-refine — streaming SSE endpoint for iterative script tweaks
+router.post('/ai-refine', async (req, res) => {
+    const { currentScript, prompt } = req.body;
+    if (!(0, anthropicClient_1.hasAnthropicCredentials)()) {
+        res.status(500).json({
+            error: 'Anthropic API credentials not configured. Set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN) in backend/.env or as an environment variable.',
+        });
+        return;
+    }
+    if (!currentScript || !prompt) {
+        res.status(400).json({ error: 'currentScript and prompt are required' });
+        return;
+    }
+    // HAR-imported scripts embed the replayed calls as literal LOGIN_REQUEST/
+    // CAPTURED_REQUESTS constants, which can be hundreds of KB. Sending those
+    // through Claude and asking it to reproduce them verbatim guarantees
+    // truncation past max_tokens, producing invalid JS (see k6PromptBlocks.ts
+    // for the full rationale). Strip them out and splice the real data back in
+    // after refinement, exactly like /api/har-generate does for initial generation.
+    const extracted = (0, k6PromptBlocks_1.extractCapturedData)(currentScript);
+    const scriptAfterCapturedStrip = extracted ? extracted.strippedScript : currentScript;
+    // Same reasoning as above, but for the CSV-based CREDENTIALS pool — strip it
+    // before prompting so Claude never sees/retypes real login credentials, and
+    // splice the original rows back in afterward untouched.
+    const extractedCreds = (0, k6PromptBlocks_1.extractCredentials)(scriptAfterCapturedStrip);
+    const scriptForPrompt = extractedCreds ? extractedCreds.strippedScript : scriptAfterCapturedStrip;
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    const sendEvent = (type, data) => {
+        res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+    };
+    try {
+        sendEvent('status', { message: `Acknowledged: "${prompt}"` });
+        sendEvent('status', { message: 'Analyzing current script…' });
+        sendEvent('status', { message: 'Applying requested changes…' });
+        let fullScript = await streamRefinement(scriptForPrompt, prompt, !!extracted, sendEvent);
+        if (extracted)
+            fullScript = (0, k6PromptBlocks_1.injectCapturedData)(fullScript, extracted.dataBlock);
+        if (extractedCreds)
+            fullScript = (0, k6PromptBlocks_1.injectCredentialsBlock)(fullScript, extractedCreds.dataBlock);
+        if (!(0, k6ScriptValidator_1.isBraceBalanced)(fullScript)) {
+            sendEvent('status', { message: 'Generated script failed a structural check — retrying once…' });
+            fullScript = await streamRefinement(scriptForPrompt, prompt, !!extracted, sendEvent);
+            if (extracted)
+                fullScript = (0, k6PromptBlocks_1.injectCapturedData)(fullScript, extracted.dataBlock);
+            if (extractedCreds)
+                fullScript = (0, k6PromptBlocks_1.injectCredentialsBlock)(fullScript, extractedCreds.dataBlock);
+            if (!(0, k6ScriptValidator_1.isBraceBalanced)(fullScript)) {
+                sendEvent('error', { message: 'Claude produced a script with mismatched braces twice in a row. Please try again — if this keeps happening, try a smaller or more specific change.' });
+                res.end();
+                return;
+            }
+        }
+        sendEvent('status', { message: 'Script updated successfully' });
+        sendEvent('complete', { script: fullScript });
+        res.end();
+    }
+    catch (err) {
+        if (err.name === 'AbortError') {
+            res.end();
+            return;
+        }
+        if (err.status === 401) {
+            sendEvent('error', { message: 'Invalid Anthropic API key. Check your ANTHROPIC_API_KEY.' });
+        }
+        else if (err.status === 429) {
+            sendEvent('error', { message: 'Rate limit reached. Please wait a moment and try again.' });
+        }
+        else if ((0, anthropicClient_1.isOverloadedError)(err)) {
+            sendEvent('error', { message: "Claude's servers are overloaded right now. We retried a few times but it didn't recover — please try again in a minute." });
+        }
+        else {
+            sendEvent('error', { message: err.message || 'Refinement failed' });
         }
         res.end();
     }

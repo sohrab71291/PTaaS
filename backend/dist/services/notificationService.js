@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.notificationService = void 0;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
-const nodemailer_1 = __importDefault(require("nodemailer"));
+const mailer_1 = require("../lib/mailer");
 const DATA_DIR = path_1.default.join(__dirname, '../../data');
 const FILE = path_1.default.join(DATA_DIR, 'notification-configs.json');
 function readConfigs() {
@@ -21,28 +21,6 @@ function writeConfigs(data) {
     if (!fs_1.default.existsSync(DATA_DIR))
         fs_1.default.mkdirSync(DATA_DIR, { recursive: true });
     fs_1.default.writeFileSync(FILE, JSON.stringify(data, null, 2));
-}
-function buildSmtpTransport() {
-    const host = process.env.SMTP_HOST;
-    const port = parseInt(process.env.SMTP_PORT || '587', 10);
-    const user = process.env.SMTP_USER;
-    const pass = process.env.SMTP_PASS;
-    const from = process.env.SMTP_FROM || user || 'noreply@perfops.local';
-    if (!host)
-        return null;
-    return { transport: nodemailer_1.default.createTransport({ host, port, auth: user && pass ? { user, pass } : undefined }), from };
-}
-async function sendEmail(recipients, subject, html) {
-    const smtp = buildSmtpTransport();
-    if (!smtp)
-        return { ok: false, message: 'SMTP not configured (set SMTP_HOST in .env)' };
-    try {
-        await smtp.transport.sendMail({ from: smtp.from, to: recipients.join(','), subject, html });
-        return { ok: true, message: `Email sent to ${recipients.join(', ')}` };
-    }
-    catch (err) {
-        return { ok: false, message: err.message };
-    }
 }
 async function sendTeams(webhookUrl, payload) {
     try {
@@ -236,7 +214,7 @@ exports.notificationService = {
         if (!shouldSend)
             return { ok: true, message: 'Trigger condition not met — skipped' };
         if (config.type === 'email') {
-            return sendEmail(config.emailRecipients, `PerfOps: ${exec.specName} — ${exec.status.toUpperCase()}`, buildEmailHtml(exec));
+            return (0, mailer_1.sendMail)(config.emailRecipients, `PerfOps: ${exec.specName} — ${exec.status.toUpperCase()}`, buildEmailHtml(exec));
         }
         if (config.type === 'teams' && config.teamsWebhookUrl) {
             return sendTeams(config.teamsWebhookUrl, buildTeamsCard(exec));

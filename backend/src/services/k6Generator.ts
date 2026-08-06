@@ -63,10 +63,20 @@ export function generateK6Script(spec: TestSpec, baseUrl = 'https://api.example.
     .map(s => `    { duration: '${s.duration}', target: ${s.target} }`)
     .join(',\n');
 
+  // http_req_duration/http_req_failed are k6 system metrics that, unscoped,
+  // aggregate EVERY http call the script makes — including the InfluxDB
+  // write/precheck traffic from the InfluxDB boilerplate (k6InfluxTemplate.ts).
+  // Scoping to {endpoint_type:app} restricts them to the actual request under
+  // test (tagged below), which never includes the InfluxDB calls (those are
+  // deliberately left untagged for endpoint_type). 'checks' doesn't need this —
+  // check() is only ever called against the app response, never against
+  // InfluxDB's own responses, so it's already unpolluted.
+  const SYSTEM_METRICS_NEEDING_APP_SCOPE = new Set(['http_req_duration', 'http_req_failed']);
   const thresholdEntries = Object.entries(thresholds)
     .map(([metric, conditions]) => {
       const condArr = conditions.map(c => `'${c.condition}'`).join(', ');
-      return `    '${metric}': [${condArr}]`;
+      const key = SYSTEM_METRICS_NEEDING_APP_SCOPE.has(metric) ? `${metric}{endpoint_type:app}` : metric;
+      return `    '${key}': [${condArr}]`;
     })
     .join(',\n');
 
@@ -156,7 +166,7 @@ ${thresholdEntries}
   if (request.method === 'GET' || request.method === 'DELETE') {
     httpCall = `  const res = http.${request.method.toLowerCase()}(BASE_URL + '${urlPath}', {
     headers: commonHeaders,
-    tags: { scenario: SCENARIO_NAME, api: '${apiTag}', name: '${request.method} ${urlPath}' },
+    tags: { scenario: SCENARIO_NAME, api: '${apiTag}', name: '${request.method} ${urlPath}', endpoint_type: 'app' },
   });`;
   } else {
     const payloadVal = request.payload
@@ -165,12 +175,12 @@ ${thresholdEntries}
     httpCall = `  const payload = ${payloadVal};
   const res = http.${request.method.toLowerCase()}(BASE_URL + '${urlPath}', payload, {
     headers: commonHeaders,
-    tags: { scenario: SCENARIO_NAME, api: '${apiTag}', name: '${request.method} ${urlPath}' },
+    tags: { scenario: SCENARIO_NAME, api: '${apiTag}', name: '${request.method} ${urlPath}', endpoint_type: 'app' },
   });`;
     sentBytesExpr = 'getByteLength(payload)';
   }
 
-  // ── checks ────────────────────────────────────────────────────────────────
+  // ── checks (VALIDATIONS ONLY — never gate pass/fail, see below) ────────────
   const checkLines = checks.map(c => {
     if (c.includes('status is 200')) return "    'status is 200': (r) => r.status === 200";
     if (c.includes('status is 201')) return "    'status is 201': (r) => r.status === 201";
@@ -206,8 +216,17 @@ ${influxIterationTracking('SCENARIO_NAME')}
   group('${stepName}', () => {
 ${httpCall}
 
-    check(res, {
+    // Checks are validations only — a failing one is logged as a WARNING,
+    // never an error, and never affects pass/fail on its own. Thresholds
+    // (options.thresholds above) are the SLA/SLO gate for the run; every
+    // 4xx/5xx status below is unconditionally a real failure regardless of
+    // whether these checks pass.
+    const checkDefs = {
 ${checkLines}
+    };
+    check(res, checkDefs);
+    Object.entries(checkDefs).forEach(function (entry) {
+      if (!entry[1](res)) console.warn('${stepName} validation warning: ' + entry[0] + ' (got status ' + res.status + ')');
     });
 
     ${recordCall}
@@ -216,6 +235,13 @@ ${checkLines}
       console.error('Request failed: ' + res.status + ' ' + res.body);
     }
   });
+
+  // Force-flush this iteration's buffered InfluxDB lines now — teardown()
+  // runs in its own fresh VU context in k6, so it can only flush an empty
+  // buffer of its own, never the one this VU actually accumulated. Without
+  // this, up to INFLUX_FLUSH_THRESHOLD-1 trailing requestsRaw points get
+  // silently dropped whenever a VU's iteration ends mid-batch.
+  flushInfluxLines();
 
   sleep(${loadProfile.thinkTime || 1});
 }

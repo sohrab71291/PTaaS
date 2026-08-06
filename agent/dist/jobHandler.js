@@ -22,11 +22,14 @@ class JobHandler {
         this.connection.send({ type: 'job_accepted', executionId });
         const runner = new k6Runner_1.K6Runner((update) => {
             if (update.type === 'complete') {
+                const sum = update.data.summary;
                 this.connection.send({
                     type: 'job_complete',
                     executionId,
                     exitCode: update.data.exitCode,
-                    summary: update.data.summary,
+                    summary: sum,
+                    thresholdResults: sum?.thresholdResults ?? [],
+                    checkResults: sum?.checkResults ?? [],
                 });
                 this.activeJobs.delete(executionId);
             }

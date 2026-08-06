@@ -129,12 +129,16 @@ function flushInfluxLines() {
 function buildMetricTagSet(t) {
   return 'testid=' + escapeTagValue(t.testid) + ',scenario=' + escapeTagValue(t.scenario) + ',api=' + escapeTagValue(t.api) + ',url=' + escapeTagValue(t.url) + ',status=' + escapeTagValue(t.status);
 }
+// PASS/FAIL POLICY: this is used ONLY to label a check()/console.warn()
+// validation as passed/failed — it must NEVER influence whether a response
+// counts as a failure in recordCustomMetrics() below. Every 4xx/5xx status is
+// unconditionally a real failure (see recordCustomMetrics), full stop — a
+// captured/expected status match only ever affects the check()/WARNING text.
 // A replayed/captured request can legitimately land on a redirect to a
 // different location than the one captured — still a redirect, so still
-// expected. 401/403 are deliberately NOT treated as expected here: a real
-// auth failure (expired/invalid session, bad credentials, missing bearer
-// token) must show up as a failure in checks/http_req_failed/errorRate, not
-// get silently absorbed — that previously masked the true failure rate.
+// "expected" for the check() label. 401/403 are deliberately NOT treated as
+// expected here: a real auth failure (expired/invalid session, bad
+// credentials, missing bearer token) must always surface as a failed check.
 function isResponseStatusExpected(response, expectedStatus) {
   if (expectedStatus === undefined || expectedStatus === null) return false;
   if (response.status === expectedStatus) return true;
@@ -143,8 +147,13 @@ function isResponseStatusExpected(response, expectedStatus) {
   }
   return false;
 }
+// expectedStatus is passed through for context only (error messages) — it
+// must NEVER exempt a 4xx/5xx from counting as failed. Every non-2xx/3xx
+// response is unconditionally a real failure (Section D Thresholds/SLA
+// policy — see the Test Authoring "Validation and Threshold" panel): Section
+// D Checks are validations only and must never affect this calculation.
 function recordCustomMetrics(response, scenario, apiTag, urlPath, sentBytes, requestName, expectedStatus) {
-  const failed = response.status >= 400 && !isResponseStatusExpected(response, expectedStatus) ? 1 : 0;
+  const failed = response.status >= 400 ? 1 : 0;
   const ts = String(Date.now()) + '000000';
   const mTags = { testid: TEST_ID, scenario: scenario, api: apiTag, url: urlPath, status: String(response.status) };
   const tagSet = buildMetricTagSet(mTags);
@@ -196,6 +205,10 @@ export function buildGenericAuthPatternBlock(): string {
 AUTHENTICATION PATTERN — MANDATORY whenever the test cases involve a login/auth
 step. Login ONCE in setup(), not per-VU/per-iteration, to avoid concurrent-login
 failures (e.g. rate limits, session collisions) when many VUs ramp up in parallel.
+This pattern calls fail() below — 'fail' MUST be in the top-level k6 import
+(import { check, group, sleep, fail } from 'k6';), NOT just check/group/sleep.
+Omitting it crashes the ENTIRE script with "fail is not defined" the instant
+a login attempt fails, aborting every VU instead of just that one attempt.
 ════════════════════════════════════════════════════════════════
 
 Merge this into the setup() shown above (do not write a second setup()) — after
@@ -327,12 +340,12 @@ function authHeadersFrom(auth) {
 
 const params = {
   headers: { ...authHeadersFrom(auth), 'Content-Type': 'application/json' },
-  tags: { name: '<RequestName>' },
+  tags: { name: '<RequestName>', endpoint_type: 'app' },
 };
 let res = http.post(url, payload, params);
 if (res.status === 401 || res.status === 403) {
   auth = reauthenticate();
-  res = http.post(url, payload, { headers: { ...authHeadersFrom(auth), 'Content-Type': 'application/json' }, tags: { name: '<RequestName>' } });
+  res = http.post(url, payload, { headers: { ...authHeadersFrom(auth), 'Content-Type': 'application/json' }, tags: { name: '<RequestName>', endpoint_type: 'app' } });
 }
 
 At the START of every exec function iteration (NOT export default), add:
@@ -346,12 +359,36 @@ At the START of every exec function iteration (NOT export default), add:
     'virtualUsers,' + buildInfluxTagSet({ runId: RUN_ID, nodeName: NODE_NAME, testName: TEST_NAME, scenario: SCENARIO_NAME }) + ' meanActiveThreads=1,finishedThreads=' + __ITER + ' ' + _ts,
   ]);
 
-After EVERY http call, immediately call (the trailing expectedStatus arg lets
-recordCustomMetrics use the isResponseStatusExpected() helper declared in the
-InfluxDB block above, so an expected redirect doesn't get counted as a failure
-— note 401/403 are NEVER treated as expected there, by design, so a real auth
-failure always counts against http_req_failed/errorRate):
+After EVERY http call, immediately call (the trailing expectedStatus arg is
+passed through for context/error-message purposes only — recordCustomMetrics
+treats EVERY 4xx/5xx as an unconditional failure, no exceptions, per the
+PASS/FAIL POLICY in the InfluxDB block above):
   recordCustomMetrics(res, SCENARIO_NAME, '<api-tag>', '<url-path>', getByteLength(payload || ''), '<Step Name>', <expected-status>);
+
+Also call check() on every response for the configured Validation entries
+(status/response-time assertions) and log any failing one via console.warn()
+— e.g. \`console.warn('<Step Name> validation warning: expected status ' +
+expectedStatus + ' but got ' + res.status);\` — NEVER console.error() for a
+failing check. console.error() is reserved for the unconditional 4xx/5xx
+failure log required by rule 8.
+
+endpoint_type: 'app' IS MANDATORY in the tags object of every request under
+test (login, reauth, and every request made inside an exec function) — this
+is what lets options.thresholds scope http_req_duration/http_req_failed to
+{endpoint_type:app} (see rule 11) and exclude the InfluxDB block's own
+write/precheck HTTP calls below, which are deliberately left without this tag.
+
+flushInfluxLines() (declared in the InfluxDB block above) MUST be called as
+the LAST statement of every exec function, after all of that iteration's
+requests — do NOT rely on teardown() for this. teardown() runs in its own
+fresh VU context in k6 (see the InfluxDB block's writeInfluxLines() comment),
+so it can only ever flush an EMPTY buffer of its own; it can never reach the
+buffer this VU actually accumulated during the test. Without this explicit
+per-iteration flush, up to INFLUX_FLUSH_THRESHOLD-1 trailing requestsRaw
+points get silently dropped whenever a VU's iteration ends mid-batch — which
+is exactly why a script's own k6_http_reqs_total counter (in-memory, always
+exact) can end up higher than the request count the report derives from
+requestsRaw.
 `;
 }
 
@@ -361,6 +398,11 @@ AUTHENTICATION PATTERN — CSV-BASED PER-VU CREDENTIALS. MANDATORY when the user
 has opted into CSV-based login credentials. Do NOT write a generic single
 shared setup() login for this mode — every VU logs in with its own
 username/password drawn from a credential pool uploaded on the Executor page.
+This pattern calls fail() below — 'fail' MUST be in the top-level k6 import
+(import { check, group, sleep, fail } from 'k6';), NOT just check/group/sleep.
+Omitting it crashes the ENTIRE script with "fail is not defined" the instant
+a VU has no credentials or its login fails, aborting every VU instead of just
+that one VU.
 ════════════════════════════════════════════════════════════════
 
 Declare this CREDENTIALS placeholder right after the InfluxDB block's env vars
@@ -449,7 +491,7 @@ function ensureAuth() {
   const res = http.post(
     cred.loginUrl,
     JSON.stringify(loginPayload),
-    { headers: { 'Content-Type': 'application/json' }, tags: { name: 'Login' }, jar: jar },
+    { headers: { 'Content-Type': 'application/json' }, tags: { name: 'Login', endpoint_type: 'app' }, jar: jar },
   );
   let body = {};
   try { body = res.json(); } catch (e) { body = {}; }
@@ -516,7 +558,7 @@ or User-Agent on any request — these headers must never be sent:
 
 const params = {
   headers: { ...authHeaders, 'Content-Type': 'application/json' },
-  tags: { name: '<RequestName>' },
+  tags: { name: '<RequestName>', endpoint_type: 'app' },
   jar: getVuJar(),
 };
 const res = http.post(url, payload, params);
@@ -562,7 +604,7 @@ const params = {
     'x-http-method-override': 'GET',
     'Content-Type': 'application/json',
   },
-  tags: { name: 'GetModuleRecordAccess' },
+  tags: { name: 'GetModuleRecordAccess', endpoint_type: 'app' },
 };
 const res = http.post(url, payload, params);
 
@@ -592,7 +634,7 @@ test case data — do NOT invent, reuse another call's value, or hardcode one:
 // has one for it) alongside its other headers:
 const laterParams = {
   headers: { ...authHeaders, 'x-csrf-token': csrfToken, 'x-archer-source': '<verbatim from this call\\'s captured headers, if present>', 'Content-Type': 'application/json' },
-  tags: { name: '<RequestName>' },
+  tags: { name: '<RequestName>', endpoint_type: 'app' },
 };
 
 CSRF REFRESH ON REAUTH IS MANDATORY. A csrf token is bound to the specific
@@ -613,7 +655,7 @@ response BEFORE the caller retries the original failed request:
 // obtained (before returning it to the caller that will retry):
 const csrfRes = http.post(BASE_URL + '<GetModuleRecordAccess captured path>', payload, {
   headers: { Cookie: '__ArcherSessionCookie__=' + newAuth.sessionToken, 'x-http-method-override': 'GET', 'Content-Type': 'application/json' },
-  tags: { name: 'GetModuleRecordAccess (csrf-refresh)' },
+  tags: { name: 'GetModuleRecordAccess (csrf-refresh)', endpoint_type: 'app' },
 });
 csrfToken = csrfRes.headers['csrf-token'] || csrfRes.headers['Csrf-Token'] || csrfToken;
 `;

@@ -9,7 +9,12 @@ const prisma_1 = __importDefault(require("../lib/prisma"));
 const auth_1 = require("../middleware/auth");
 const agentRegistry_1 = require("../services/agentRegistry");
 const router = (0, express_1.Router)();
-// Public — called by the agent CLI before it has a JWT
+// Public — called by the agent CLI before it has a JWT. The agent process
+// calls this on every startup (see agent/src/index.ts), so re-registering
+// under the same name rotates that agent's key in place instead of creating
+// a new row — otherwise every restart left a stale, orphaned credential
+// behind that could still authenticate a leftover process and desync from
+// whatever agent/.env said on disk.
 router.post('/agents/register', async (req, res) => {
     const { name, hostname } = req.body;
     if (!name) {
@@ -18,11 +23,12 @@ router.post('/agents/register', async (req, res) => {
     }
     // TODO: hash apiKey with bcrypt before storing in production
     const apiKey = crypto_1.default.randomBytes(32).toString('hex');
-    const agent = await prisma_1.default.agent.create({
-        data: { name, apiKey, hostname: hostname ?? null },
-    });
+    const existing = await prisma_1.default.agent.findFirst({ where: { name } });
+    const agent = existing
+        ? await prisma_1.default.agent.update({ where: { id: existing.id }, data: { apiKey, hostname: hostname ?? null } })
+        : await prisma_1.default.agent.create({ data: { name, apiKey, hostname: hostname ?? null } });
     // apiKey returned in plaintext only this once
-    res.status(201).json({ agentId: agent.id, apiKey, name: agent.name });
+    res.status(existing ? 200 : 201).json({ agentId: agent.id, apiKey, name: agent.name });
 });
 // Protected — requires admin role
 router.get('/agents', auth_1.requireAuth, (0, auth_1.requireRole)('ADMIN', 'TESTER'), async (req, res) => {

@@ -67,6 +67,7 @@ model Execution {
   specName           String
   environment        String
   status             String    @default("queued")
+  errorMessage        String?
   triggeredBy        String
   startedAt          DateTime?
   finishedAt         DateTime?
@@ -122,6 +123,16 @@ model Schedule {
   cronExpression       String
   enabled              Boolean     @default(true)
   notificationConfigId String?
+  fetchFromGithub      Boolean     @default(false)
+  scmProvider          String      @default("github")
+  githubRepoUrl        String?
+  githubBranch         String?
+  githubScriptPath     String?
+  githubToken          String?
+  gitlabRepoUrl        String?
+  gitlabBranch         String?
+  gitlabScriptPath     String?
+  gitlabToken          String?
   lastRunAt            DateTime?
   lastRunStatus        String?
   nextRunAt            DateTime?

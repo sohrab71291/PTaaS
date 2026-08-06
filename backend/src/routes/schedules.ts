@@ -8,7 +8,11 @@ router.get('/', async (_req: Request, res: Response) => {
 });
 
 router.post('/', async (req: Request, res: Response) => {
-  const { name, specId, environmentId, cronExpression, enabled, notificationConfigId } = req.body;
+  const {
+    name, specId, environmentId, cronExpression, enabled, notificationConfigId, fetchFromGithub,
+    scmProvider, githubRepoUrl, githubBranch, githubScriptPath, githubToken,
+    gitlabRepoUrl, gitlabBranch, gitlabScriptPath, gitlabToken,
+  } = req.body;
 
   if (!name || !specId || !cronExpression) {
     return res.status(400).json({ error: 'name, specId, and cronExpression are required' });
@@ -21,6 +25,16 @@ router.post('/', async (req: Request, res: Response) => {
     cronExpression,
     enabled: enabled !== false,
     notificationConfigId: notificationConfigId || null,
+    fetchFromGithub: fetchFromGithub === true,
+    scmProvider: scmProvider === 'gitlab' ? 'gitlab' : 'github',
+    githubRepoUrl: githubRepoUrl || null,
+    githubBranch: githubBranch || null,
+    githubScriptPath: githubScriptPath || null,
+    githubToken: githubToken || null,
+    gitlabRepoUrl: gitlabRepoUrl || null,
+    gitlabBranch: gitlabBranch || null,
+    gitlabScriptPath: gitlabScriptPath || null,
+    gitlabToken: gitlabToken || null,
   });
 
   return res.status(201).json(schedule);

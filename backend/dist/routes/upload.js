@@ -40,10 +40,11 @@ const express_1 = require("express");
 const multer_1 = __importDefault(require("multer"));
 const XLSX = __importStar(require("xlsx"));
 const k6FromTestCases_1 = require("../services/k6FromTestCases");
+const harParser_1 = require("../services/harParser");
 const router = (0, express_1.Router)();
-const upload = (0, multer_1.default)({
+const uploadTestCases = (0, multer_1.default)({
     storage: multer_1.default.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024 },
+    limits: { fileSize: 50 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
         const allowed = ['.csv', '.xls', '.xlsx'];
         const ext = '.' + file.originalname.split('.').pop()?.toLowerCase();
@@ -51,6 +52,20 @@ const upload = (0, multer_1.default)({
             cb(null, true);
         else
             cb(new Error(`Unsupported file type: ${ext}. Allowed: ${allowed.join(', ')}`));
+    },
+});
+// See harGenerate.ts's upload config for why this sits at 150MB, not 200MB —
+// the jsonb column the file's base64 ultimately lands in caps a single string
+// at ~256MB, and 200MB raw already exceeded that once encoded.
+const uploadHar = (0, multer_1.default)({
+    storage: multer_1.default.memoryStorage(),
+    limits: { fileSize: 150 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const ext = '.' + file.originalname.split('.').pop()?.toLowerCase();
+        if (['.har', '.json'].includes(ext))
+            cb(null, true);
+        else
+            cb(new Error(`Unsupported file type: ${ext}. Allowed: .har, .json`));
     },
 });
 function normalizeHeader(h) {
@@ -102,7 +117,7 @@ function parseRows(rawRows) {
     });
     return { testCases, warnings };
 }
-router.post('/upload/test-cases', upload.single('file'), (req, res) => {
+router.post('/upload/test-cases', uploadTestCases.single('file'), (req, res) => {
     if (!req.file) {
         res.status(400).json({ error: 'No file uploaded. Use multipart/form-data with field name "file".' });
         return;
@@ -127,5 +142,66 @@ router.post('/upload/test-cases', upload.single('file'), (req, res) => {
     catch (err) {
         res.status(500).json({ error: err.message || 'Failed to process file' });
     }
+});
+// ── POST /api/upload/har ──────────────────────────────────────────────────────
+// Accepts one or more .har / .json files (field name "files" or "file").
+// Parses every HAR entry across all uploaded files, deduplicates by
+// (method, normalised path), generates a single combined k6 script, and
+// returns { script, testCases, warnings, skipped }.
+router.post('/upload/har', uploadHar.any(), (req, res) => {
+    const files = req.files ?? [];
+    if (files.length === 0) {
+        res.status(400).json({ error: 'No files uploaded. Use multipart/form-data with field name "files".' });
+        return;
+    }
+    const allTestCases = [];
+    const allWarnings = [];
+    let totalSkipped = 0;
+    // Load profile forwarded from the Test Authoring form (optional)
+    let loadProfile;
+    try {
+        loadProfile = req.body.loadProfile ? JSON.parse(req.body.loadProfile) : undefined;
+    }
+    catch { /* ignore */ }
+    for (const file of files) {
+        try {
+            const content = file.buffer.toString('utf-8');
+            const { testCases, warnings, skipped } = (0, harParser_1.parseHar)(content, file.originalname);
+            allTestCases.push(...testCases);
+            allWarnings.push(...warnings);
+            totalSkipped += skipped;
+        }
+        catch (err) {
+            allWarnings.push(`${file.originalname}: ${err.message}`);
+        }
+    }
+    if (allTestCases.length === 0) {
+        res.status(422).json({
+            error: 'No API requests found across the uploaded file(s). Check that the files are valid HAR exports with captured network traffic.',
+            warnings: allWarnings,
+        });
+        return;
+    }
+    // Global deduplication across files: same method+normalised-path → keep first
+    const seen = new Set();
+    const deduped = [];
+    for (const tc of allTestCases) {
+        const key = `${tc.method} ${tc.url}`;
+        if (!seen.has(key)) {
+            seen.add(key);
+            deduped.push(tc);
+        }
+    }
+    if (deduped.length < allTestCases.length) {
+        allWarnings.push(`Removed ${allTestCases.length - deduped.length} cross-file duplicate request(s)`);
+    }
+    const script = (0, k6FromTestCases_1.generateK6FromTestCases)(deduped, loadProfile);
+    res.json({
+        script,
+        testCases: deduped,
+        warnings: allWarnings,
+        skipped: totalSkipped,
+        filesProcessed: files.length,
+    });
 });
 exports.default = router;

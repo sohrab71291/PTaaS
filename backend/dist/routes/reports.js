@@ -42,9 +42,27 @@ router.get('/:executionId', async (req, res) => {
             data: { metrics: influxFallback.metrics, responseTimeSeries: influxFallback.timeSeries },
         }).catch(() => { });
     }
+    // Stored errorRate is a decimal (0-1, canonical unit used by SLO
+    // evaluation/notifications) — convert to % to match the frontend's display
+    // convention. This must happen unconditionally: it previously only ran
+    // inside the `if (grafanaMetrics)` branch below, so whenever the requestsRaw
+    // Influx query returned nothing (e.g. no matching points for that time
+    // window), the raw decimal leaked straight through to the frontend, which
+    // renders `metrics.errorRate` assuming it is already a percentage — a
+    // genuine 7.55% error rate displayed as ~0.08%.
+    if (metrics && metrics.errorRate != null) {
+        metrics = { ...metrics, errorRate: metrics.errorRate * 100 };
+    }
     // If requestsRaw produced richer metrics, promote them to the main metrics object
     if (grafanaMetrics) {
         metricsSource = 'requestsRaw';
+        // Error rate is intentionally NOT taken from requestsRaw here, unlike the
+        // other fields — requestsRaw's per-request error tagging uses different
+        // pass/fail semantics (e.g. isResponseStatusExpected()'s allowances for
+        // known-benign 404s/redirects) than the error rate the Executor page
+        // showed live/at completion, which was recorded straight from the run
+        // itself. Recomputing it here made the report silently diverge from what
+        // the user already saw on the Executor page for this exact execution.
         // Merge — requestsRaw is authoritative for these fields
         metrics = {
             ...(metrics ?? {}),
@@ -54,7 +72,7 @@ router.get('/:executionId', async (req, res) => {
             p99: grafanaMetrics.p99,
             avg: grafanaMetrics.avgResponseTime,
             rps: grafanaMetrics.rps,
-            errorRate: grafanaMetrics.errorRate * 100, // store as % for consistency with rest of app
+            errorRate: metrics?.errorRate ?? grafanaMetrics.errorRate * 100,
             maxVUs: grafanaMetrics.maxVUs || metrics?.maxVUs || 0,
             totalRequests: grafanaMetrics.requestCount,
         };
