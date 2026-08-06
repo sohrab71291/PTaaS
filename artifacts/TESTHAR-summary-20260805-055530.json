@@ -1,0 +1,961 @@
+{
+    "metrics": {
+        "k6_http_req_duration_seconds": {
+            "med": 0.076469,
+            "max": 0.5965385999999999,
+            "p(90)": 0.3786445299999998,
+            "p(95)": 0.4799573399999997,
+            "avg": 0.1456435923076923,
+            "min": 0.0050042
+        },
+        "iteration_duration": {
+            "p(95)": 30693.72164,
+            "avg": 30084.8765,
+            "min": 29408.3819,
+            "med": 30084.8765,
+            "max": 30761.3711,
+            "p(90)": 30626.07218
+        },
+        "http_req_failed": {
+            "passes": 4,
+            "fails": 49,
+            "thresholds": {
+                "rate<0.01": true
+            },
+            "value": 0.07547169811320754
+        },
+        "k6_vus_max": {
+            "value": 1,
+            "min": 1,
+            "max": 1
+        },
+        "group_duration": {
+            "max": 597.7115,
+            "p(90)": 402.67145,
+            "p(95)": 518.841815,
+            "avg": 155.6498423076923,
+            "min": 6.2454,
+            "med": 79.90655000000001
+        },
+        "http_req_tls_handshaking": {
+            "min": 0,
+            "med": 0,
+            "max": 12.47,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0.23528301886792455
+        },
+        "http_req_receiving": {
+            "avg": 2.2881547169811327,
+            "min": 0,
+            "med": 0,
+            "max": 62.8957,
+            "p(90)": 2.490440000000002,
+            "p(95)": 4.4624
+        },
+        "vus_max": {
+            "value": 1,
+            "min": 1,
+            "max": 1
+        },
+        "http_reqs": {
+            "count": 53,
+            "rate": 0.8807585224010153
+        },
+        "http_req_duration{expected_response:true}": {
+            "min": 5.0042,
+            "med": 83.3189,
+            "max": 596.5386,
+            "p(90)": 392.31516000000005,
+            "p(95)": 489.7510199999996,
+            "avg": 150.19490408163267
+        },
+        "k6_http_reqs_total": {
+            "count": 52,
+            "rate": 0.8641404370726943
+        },
+        "http_req_connecting": {
+            "avg": 0.12005094339622642,
+            "min": 0,
+            "med": 0,
+            "max": 6.3627,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "http_req_sending": {
+            "p(95)": 2.78388,
+            "avg": 0.7649490566037737,
+            "min": 0,
+            "med": 0.4903,
+            "max": 3.7304,
+            "p(90)": 1.9341200000000016
+        },
+        "http_req_duration": {
+            "p(90)": 367.3177600000005,
+            "p(95)": 476.6927799999999,
+            "avg": 144.70881132075473,
+            "min": 5.0042,
+            "med": 77.0739,
+            "max": 596.5386,
+            "thresholds": {
+                "p(95)<500": false
+            }
+        },
+        "http_req_blocked": {
+            "min": 0,
+            "med": 0,
+            "max": 161.6908,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 3.0507698113207544
+        },
+        "k6_data_received_bytes_total": {
+            "count": 1326097,
+            "rate": 22037.193099630553
+        },
+        "http_req_waiting": {
+            "avg": 141.6557075471698,
+            "min": 3.691,
+            "med": 72.5214,
+            "max": 595.6337,
+            "p(90)": 366.8641600000005,
+            "p(95)": 474.6043399999999
+        },
+        "data_received": {
+            "count": 1362208,
+            "rate": 22637.288778921553
+        },
+        "checks": {
+            "passes": 157,
+            "fails": 51,
+            "value": 0.7548076923076923
+        },
+        "k6_iterations_total": {
+            "rate": 0.03323617065664209,
+            "count": 2
+        },
+        "data_sent": {
+            "rate": 445.18188786039246,
+            "count": 26789
+        },
+        "k6_vus": {
+            "value": 1,
+            "min": 1,
+            "max": 1
+        },
+        "k6_data_sent_bytes_total": {
+            "count": 1134,
+            "rate": 18.844908762316063
+        },
+        "vus": {
+            "value": 1,
+            "min": 1,
+            "max": 1
+        },
+        "iterations": {
+            "count": 2,
+            "rate": 0.03323617065664209
+        }
+    },
+    "setup_data": null,
+    "root_group": {
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "GET _apps_ArcherApp_ArcherApp_aspx": {
+                "name": "GET _apps_ArcherApp_ArcherApp_aspx",
+                "path": "::GET _apps_ArcherApp_ArcherApp_aspx",
+                "id": "9e37b75769aff69d9df7cce2d515ebbb",
+                "groups": {},
+                "checks": {
+                        "GET _apps_ArcherApp_ArcherApp_aspx status is 200": {
+                            "id": "149c0bf782c9bf8292698e36154a472e",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _apps_ArcherApp_ArcherApp_aspx status is 200",
+                            "path": "::GET _apps_ArcherApp_ArcherApp_aspx::GET _apps_ArcherApp_ArcherApp_aspx status is 200"
+                        },
+                        "GET _apps_ArcherApp_ArcherApp_aspx status is 404": {
+                            "name": "GET _apps_ArcherApp_ArcherApp_aspx status is 404",
+                            "path": "::GET _apps_ArcherApp_ArcherApp_aspx::GET _apps_ArcherApp_ArcherApp_aspx status is 404",
+                            "id": "8ae98be5fa89a1ee82a0caab1374b7c9",
+                            "passes": 0,
+                            "fails": 2
+                        },
+                        "GET _apps_ArcherApp_ArcherApp_aspx response time < 500ms": {
+                            "name": "GET _apps_ArcherApp_ArcherApp_aspx response time < 500ms",
+                            "path": "::GET _apps_ArcherApp_ArcherApp_aspx::GET _apps_ArcherApp_ArcherApp_aspx response time < 500ms",
+                            "id": "890e87b187c294be302805a96f6d4769",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _apps_ArcherApp_ArcherApp_aspx response time < 1000ms": {
+                            "name": "GET _apps_ArcherApp_ArcherApp_aspx response time < 1000ms",
+                            "path": "::GET _apps_ArcherApp_ArcherApp_aspx::GET _apps_ArcherApp_ArcherApp_aspx response time < 1000ms",
+                            "id": "e5dd2b5ca13cee20e5908d6077916c05",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    }
+            },
+            "GET _ngrx_record_v1_instance": {
+                "name": "GET _ngrx_record_v1_instance",
+                "path": "::GET _ngrx_record_v1_instance",
+                "id": "22c6f1935394e6c8bcead1899a932cf6",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_instance status is 200": {
+                            "name": "GET _ngrx_record_v1_instance status is 200",
+                            "path": "::GET _ngrx_record_v1_instance::GET _ngrx_record_v1_instance status is 200",
+                            "id": "a2720eaa6f3e7b755aeb5ee535bcfe06",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_instance status is 404": {
+                            "name": "GET _ngrx_record_v1_instance status is 404",
+                            "path": "::GET _ngrx_record_v1_instance::GET _ngrx_record_v1_instance status is 404",
+                            "id": "7997f76be3cc4bbfb8ae6241be972e8a",
+                            "passes": 0,
+                            "fails": 2
+                        },
+                        "GET _ngrx_record_v1_instance response time < 500ms": {
+                            "name": "GET _ngrx_record_v1_instance response time < 500ms",
+                            "path": "::GET _ngrx_record_v1_instance::GET _ngrx_record_v1_instance response time < 500ms",
+                            "id": "d7d283a801985076b859157d8e2900f6",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_instance response time < 1000ms": {
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_instance response time < 1000ms",
+                            "path": "::GET _ngrx_record_v1_instance::GET _ngrx_record_v1_instance response time < 1000ms",
+                            "id": "edc6628f82621e3281704e1c9b393cdc",
+                            "passes": 2
+                        }
+                    }
+            },
+            "GET _ngrx_record_v1_modules_10145_levels": {
+                "checks": {
+                    "GET _ngrx_record_v1_modules_10145_levels status is 200": {
+                        "name": "GET _ngrx_record_v1_modules_10145_levels status is 200",
+                        "path": "::GET _ngrx_record_v1_modules_10145_levels::GET _ngrx_record_v1_modules_10145_levels status is 200",
+                        "id": "2f2368e3c3b3f9b25cc3b13f119636cb",
+                        "passes": 2,
+                        "fails": 0
+                    },
+                    "GET _ngrx_record_v1_modules_10145_levels status is 404": {
+                        "name": "GET _ngrx_record_v1_modules_10145_levels status is 404",
+                        "path": "::GET _ngrx_record_v1_modules_10145_levels::GET _ngrx_record_v1_modules_10145_levels status is 404",
+                        "id": "b3c2ee2bda2d9ad3626ca625a9d13423",
+                        "passes": 0,
+                        "fails": 2
+                    },
+                    "GET _ngrx_record_v1_modules_10145_levels response time < 500ms": {
+                        "name": "GET _ngrx_record_v1_modules_10145_levels response time < 500ms",
+                        "path": "::GET _ngrx_record_v1_modules_10145_levels::GET _ngrx_record_v1_modules_10145_levels response time < 500ms",
+                        "id": "35da01c0df740a9d1fb6707afd134608",
+                        "passes": 2,
+                        "fails": 0
+                    },
+                    "GET _ngrx_record_v1_modules_10145_levels response time < 1000ms": {
+                        "name": "GET _ngrx_record_v1_modules_10145_levels response time < 1000ms",
+                        "path": "::GET _ngrx_record_v1_modules_10145_levels::GET _ngrx_record_v1_modules_10145_levels response time < 1000ms",
+                        "id": "53deb1b9ee5dec5e428059e6a4fb1577",
+                        "passes": 2,
+                        "fails": 0
+                    }
+                },
+                "name": "GET _ngrx_record_v1_modules_10145_levels",
+                "path": "::GET _ngrx_record_v1_modules_10145_levels",
+                "id": "bc91f71119e1b7a800ac4ad3e348c2ab",
+                "groups": {}
+            },
+            "POST _api_V2_internal_ConsumerGroups": {
+                "groups": {},
+                "checks": {
+                        "POST _api_V2_internal_ConsumerGroups status is 200": {
+                            "fails": 0,
+                            "name": "POST _api_V2_internal_ConsumerGroups status is 200",
+                            "path": "::POST _api_V2_internal_ConsumerGroups::POST _api_V2_internal_ConsumerGroups status is 200",
+                            "id": "e56a97f64a351b1e57443b56c546e933",
+                            "passes": 6
+                        },
+                        "POST _api_V2_internal_ConsumerGroups status is 404": {
+                            "name": "POST _api_V2_internal_ConsumerGroups status is 404",
+                            "path": "::POST _api_V2_internal_ConsumerGroups::POST _api_V2_internal_ConsumerGroups status is 404",
+                            "id": "b13ec0d3ac0c65ba6e669e892244e2b0",
+                            "passes": 0,
+                            "fails": 6
+                        },
+                        "POST _api_V2_internal_ConsumerGroups response time < 500ms": {
+                            "fails": 0,
+                            "name": "POST _api_V2_internal_ConsumerGroups response time < 500ms",
+                            "path": "::POST _api_V2_internal_ConsumerGroups::POST _api_V2_internal_ConsumerGroups response time < 500ms",
+                            "id": "791452ac6c0470c1e482109d74112e33",
+                            "passes": 6
+                        },
+                        "POST _api_V2_internal_ConsumerGroups response time < 1000ms": {
+                            "name": "POST _api_V2_internal_ConsumerGroups response time < 1000ms",
+                            "path": "::POST _api_V2_internal_ConsumerGroups::POST _api_V2_internal_ConsumerGroups response time < 1000ms",
+                            "id": "75e08318a6990a8cd5eb44295810d149",
+                            "passes": 6,
+                            "fails": 0
+                        }
+                    },
+                "name": "POST _api_V2_internal_ConsumerGroups",
+                "path": "::POST _api_V2_internal_ConsumerGroups",
+                "id": "14881088a645aee6702f71a1d20f2ba2"
+            },
+            "GET _plugins_json_id_1785735452772": {
+                "groups": {},
+                "checks": {
+                        "GET _plugins_json_id_1785735452772 status is 200": {
+                            "id": "9bd7cd6850a11fcd975a9c7aa644f173",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _plugins_json_id_1785735452772 status is 200",
+                            "path": "::GET _plugins_json_id_1785735452772::GET _plugins_json_id_1785735452772 status is 200"
+                        },
+                        "GET _plugins_json_id_1785735452772 status is 404": {
+                            "name": "GET _plugins_json_id_1785735452772 status is 404",
+                            "path": "::GET _plugins_json_id_1785735452772::GET _plugins_json_id_1785735452772 status is 404",
+                            "id": "2c8e789847ec50d153c49f3a80bab478",
+                            "passes": 0,
+                            "fails": 2
+                        },
+                        "GET _plugins_json_id_1785735452772 response time < 500ms": {
+                            "name": "GET _plugins_json_id_1785735452772 response time < 500ms",
+                            "path": "::GET _plugins_json_id_1785735452772::GET _plugins_json_id_1785735452772 response time < 500ms",
+                            "id": "1af1f634cb6debc4c4243f3237ed5e06",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _plugins_json_id_1785735452772 response time < 1000ms": {
+                            "path": "::GET _plugins_json_id_1785735452772::GET _plugins_json_id_1785735452772 response time < 1000ms",
+                            "id": "398fb2d785b6ef2574248b90f4e86174",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _plugins_json_id_1785735452772 response time < 1000ms"
+                        }
+                    },
+                "name": "GET _plugins_json_id_1785735452772",
+                "path": "::GET _plugins_json_id_1785735452772",
+                "id": "634aa0119a57eb8d34c935a85841a64f"
+            },
+            "GET _api_V2_internal_UserProfile_7648__id_7648": {
+                "name": "GET _api_V2_internal_UserProfile_7648__id_7648",
+                "path": "::GET _api_V2_internal_UserProfile_7648__id_7648",
+                "id": "b3587a4a840e6ee465a534cafa4b3fdc",
+                "groups": {},
+                "checks": {
+                        "GET _api_V2_internal_UserProfile_7648__id_7648 status is 200": {
+                            "name": "GET _api_V2_internal_UserProfile_7648__id_7648 status is 200",
+                            "path": "::GET _api_V2_internal_UserProfile_7648__id_7648::GET _api_V2_internal_UserProfile_7648__id_7648 status is 200",
+                            "id": "057d5f40a1e952365221787ed8f95560",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _api_V2_internal_UserProfile_7648__id_7648 status is 404": {
+                            "name": "GET _api_V2_internal_UserProfile_7648__id_7648 status is 404",
+                            "path": "::GET _api_V2_internal_UserProfile_7648__id_7648::GET _api_V2_internal_UserProfile_7648__id_7648 status is 404",
+                            "id": "c564e9cae1e4048a336baaabf42f0a2f",
+                            "passes": 0,
+                            "fails": 2
+                        },
+                        "GET _api_V2_internal_UserProfile_7648__id_7648 response time < 500ms": {
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _api_V2_internal_UserProfile_7648__id_7648 response time < 500ms",
+                            "path": "::GET _api_V2_internal_UserProfile_7648__id_7648::GET _api_V2_internal_UserProfile_7648__id_7648 response time < 500ms",
+                            "id": "1a568002c3ea2fc27714a751a08982b3"
+                        },
+                        "GET _api_V2_internal_UserProfile_7648__id_7648 response time < 1000ms": {
+                            "id": "5e0f59ce09b2cb91af72c45e21ca9ea3",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _api_V2_internal_UserProfile_7648__id_7648 response time < 1000ms",
+                            "path": "::GET _api_V2_internal_UserProfile_7648__id_7648::GET _api_V2_internal_UserProfile_7648__id_7648 response time < 1000ms"
+                        }
+                    }
+            },
+            "GET _ngrx_record_v1_about_version_all": {
+                "checks": {
+                    "GET _ngrx_record_v1_about_version_all status is 200": {
+                        "name": "GET _ngrx_record_v1_about_version_all status is 200",
+                        "path": "::GET _ngrx_record_v1_about_version_all::GET _ngrx_record_v1_about_version_all status is 200",
+                        "id": "ce7e49c15f3c1c97a862c0e9cc0c2292",
+                        "passes": 2,
+                        "fails": 0
+                    },
+                    "GET _ngrx_record_v1_about_version_all status is 404": {
+                        "name": "GET _ngrx_record_v1_about_version_all status is 404",
+                        "path": "::GET _ngrx_record_v1_about_version_all::GET _ngrx_record_v1_about_version_all status is 404",
+                        "id": "1654049b93d729e4a85ba9d55e31653a",
+                        "passes": 0,
+                        "fails": 2
+                    },
+                    "GET _ngrx_record_v1_about_version_all response time < 500ms": {
+                        "fails": 0,
+                        "name": "GET _ngrx_record_v1_about_version_all response time < 500ms",
+                        "path": "::GET _ngrx_record_v1_about_version_all::GET _ngrx_record_v1_about_version_all response time < 500ms",
+                        "id": "0e685308965f4163d15aa96719ba8071",
+                        "passes": 2
+                    },
+                    "GET _ngrx_record_v1_about_version_all response time < 1000ms": {
+                        "id": "78d73a717fbe533f8538570381f16c26",
+                        "passes": 2,
+                        "fails": 0,
+                        "name": "GET _ngrx_record_v1_about_version_all response time < 1000ms",
+                        "path": "::GET _ngrx_record_v1_about_version_all::GET _ngrx_record_v1_about_version_all response time < 1000ms"
+                    }
+                },
+                "name": "GET _ngrx_record_v1_about_version_all",
+                "path": "::GET _ngrx_record_v1_about_version_all",
+                "id": "5b885c35bdfefe34b77b721b4510a24b",
+                "groups": {}
+            },
+            "GET _api_V2_internal_AppearanceThemes_GetActive": {
+                "id": "44eadf359dbbacb7ca938f8b5c2e06d5",
+                "groups": {},
+                "checks": {
+                        "GET _api_V2_internal_AppearanceThemes_GetActive status is 200": {
+                            "path": "::GET _api_V2_internal_AppearanceThemes_GetActive::GET _api_V2_internal_AppearanceThemes_GetActive status is 200",
+                            "id": "7ad502b9beb3db515c8a496b2feadb5f",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _api_V2_internal_AppearanceThemes_GetActive status is 200"
+                        },
+                        "GET _api_V2_internal_AppearanceThemes_GetActive status is 404": {
+                            "passes": 0,
+                            "fails": 2,
+                            "name": "GET _api_V2_internal_AppearanceThemes_GetActive status is 404",
+                            "path": "::GET _api_V2_internal_AppearanceThemes_GetActive::GET _api_V2_internal_AppearanceThemes_GetActive status is 404",
+                            "id": "a8d21ff75ffd9186de5487229a7fbb01"
+                        },
+                        "GET _api_V2_internal_AppearanceThemes_GetActive response time < 500ms": {
+                            "name": "GET _api_V2_internal_AppearanceThemes_GetActive response time < 500ms",
+                            "path": "::GET _api_V2_internal_AppearanceThemes_GetActive::GET _api_V2_internal_AppearanceThemes_GetActive response time < 500ms",
+                            "id": "2b5de1228228f9ea624ca1470b471e7b",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _api_V2_internal_AppearanceThemes_GetActive response time < 1000ms": {
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _api_V2_internal_AppearanceThemes_GetActive response time < 1000ms",
+                            "path": "::GET _api_V2_internal_AppearanceThemes_GetActive::GET _api_V2_internal_AppearanceThemes_GetActive response time < 1000ms",
+                            "id": "4ff44f71b73102b438a65a40ca956095"
+                        }
+                    },
+                "name": "GET _api_V2_internal_AppearanceThemes_GetActive",
+                "path": "::GET _api_V2_internal_AppearanceThemes_GetActive"
+            },
+            "GET _api_V2_internal_UserProfileImage": {
+                "name": "GET _api_V2_internal_UserProfileImage",
+                "path": "::GET _api_V2_internal_UserProfileImage",
+                "id": "21089ae51c81fad8f69e86e1626e4ac2",
+                "groups": {},
+                "checks": {
+                        "GET _api_V2_internal_UserProfileImage status is 200": {
+                            "path": "::GET _api_V2_internal_UserProfileImage::GET _api_V2_internal_UserProfileImage status is 200",
+                            "id": "1b11efed4e9c9b971bb011e9ad34b2c4",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _api_V2_internal_UserProfileImage status is 200"
+                        },
+                        "GET _api_V2_internal_UserProfileImage status is 404": {
+                            "name": "GET _api_V2_internal_UserProfileImage status is 404",
+                            "path": "::GET _api_V2_internal_UserProfileImage::GET _api_V2_internal_UserProfileImage status is 404",
+                            "id": "9c3618285a71b44fb2fe6eb9e6ba7eec",
+                            "passes": 0,
+                            "fails": 2
+                        },
+                        "GET _api_V2_internal_UserProfileImage response time < 500ms": {
+                            "name": "GET _api_V2_internal_UserProfileImage response time < 500ms",
+                            "path": "::GET _api_V2_internal_UserProfileImage::GET _api_V2_internal_UserProfileImage response time < 500ms",
+                            "id": "3d4b7b9df9c4f588a20c784a46b54f39",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _api_V2_internal_UserProfileImage response time < 1000ms": {
+                            "path": "::GET _api_V2_internal_UserProfileImage::GET _api_V2_internal_UserProfileImage response time < 1000ms",
+                            "id": "e032caadd8f899dd289f652591f01e07",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _api_V2_internal_UserProfileImage response time < 1000ms"
+                        }
+                    }
+            },
+            "GET _ngrx_profile_User_7648_additionalInfo": {
+                "path": "::GET _ngrx_profile_User_7648_additionalInfo",
+                "id": "08c34791dd2406c84558593e6f64b05b",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_profile_User_7648_additionalInfo status is 200": {
+                            "name": "GET _ngrx_profile_User_7648_additionalInfo status is 200",
+                            "path": "::GET _ngrx_profile_User_7648_additionalInfo::GET _ngrx_profile_User_7648_additionalInfo status is 200",
+                            "id": "43140063696486e768d3e1043a1f4cf0",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_profile_User_7648_additionalInfo status is 404": {
+                            "path": "::GET _ngrx_profile_User_7648_additionalInfo::GET _ngrx_profile_User_7648_additionalInfo status is 404",
+                            "id": "07b0eb6696b37eece55cb1fe77082638",
+                            "passes": 0,
+                            "fails": 2,
+                            "name": "GET _ngrx_profile_User_7648_additionalInfo status is 404"
+                        },
+                        "GET _ngrx_profile_User_7648_additionalInfo response time < 500ms": {
+                            "path": "::GET _ngrx_profile_User_7648_additionalInfo::GET _ngrx_profile_User_7648_additionalInfo response time < 500ms",
+                            "id": "48011efb69b94bb4276b5b5ca50ee754",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_profile_User_7648_additionalInfo response time < 500ms"
+                        },
+                        "GET _ngrx_profile_User_7648_additionalInfo response time < 1000ms": {
+                            "fails": 0,
+                            "name": "GET _ngrx_profile_User_7648_additionalInfo response time < 1000ms",
+                            "path": "::GET _ngrx_profile_User_7648_additionalInfo::GET _ngrx_profile_User_7648_additionalInfo response time < 1000ms",
+                            "id": "281bc452fa3fb1d17841c214f8355632",
+                            "passes": 2
+                        }
+                    },
+                "name": "GET _ngrx_profile_User_7648_additionalInfo"
+            },
+            "GET _ngrx_record_v1_levels_12100_data_driven_events": {
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_levels_12100_data_driven_events status is 200": {
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_levels_12100_data_driven_events status is 200",
+                            "path": "::GET _ngrx_record_v1_levels_12100_data_driven_events::GET _ngrx_record_v1_levels_12100_data_driven_events status is 200",
+                            "id": "88cf9cb8b51f0941026d69f452fb5bc7",
+                            "passes": 2
+                        },
+                        "GET _ngrx_record_v1_levels_12100_data_driven_events status is 404": {
+                            "id": "ae64729047ce308a26c8bbf4bea3a523",
+                            "passes": 0,
+                            "fails": 2,
+                            "name": "GET _ngrx_record_v1_levels_12100_data_driven_events status is 404",
+                            "path": "::GET _ngrx_record_v1_levels_12100_data_driven_events::GET _ngrx_record_v1_levels_12100_data_driven_events status is 404"
+                        },
+                        "GET _ngrx_record_v1_levels_12100_data_driven_events response time < 500ms": {
+                            "id": "2c8d14d920b9bdec6fdd8d726159072b",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_levels_12100_data_driven_events response time < 500ms",
+                            "path": "::GET _ngrx_record_v1_levels_12100_data_driven_events::GET _ngrx_record_v1_levels_12100_data_driven_events response time < 500ms"
+                        },
+                        "GET _ngrx_record_v1_levels_12100_data_driven_events response time < 1000ms": {
+                            "name": "GET _ngrx_record_v1_levels_12100_data_driven_events response time < 1000ms",
+                            "path": "::GET _ngrx_record_v1_levels_12100_data_driven_events::GET _ngrx_record_v1_levels_12100_data_driven_events response time < 1000ms",
+                            "id": "9f4ec8960c84744c0c08ed09a805b2a7",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    },
+                "name": "GET _ngrx_record_v1_levels_12100_data_driven_events",
+                "path": "::GET _ngrx_record_v1_levels_12100_data_driven_events",
+                "id": "b18c72d331ebad1a97fa6aca1401c906"
+            },
+            "GET _ngrx_record_v1_levels_12100": {
+                "name": "GET _ngrx_record_v1_levels_12100",
+                "path": "::GET _ngrx_record_v1_levels_12100",
+                "id": "d232c4968805b4621e4b9c4b9b4b20c0",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_levels_12100 status is 200": {
+                            "path": "::GET _ngrx_record_v1_levels_12100::GET _ngrx_record_v1_levels_12100 status is 200",
+                            "id": "4540c6598076418e055c6537d272626e",
+                            "passes": 4,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_levels_12100 status is 200"
+                        },
+                        "GET _ngrx_record_v1_levels_12100 status is 404": {
+                            "fails": 4,
+                            "name": "GET _ngrx_record_v1_levels_12100 status is 404",
+                            "path": "::GET _ngrx_record_v1_levels_12100::GET _ngrx_record_v1_levels_12100 status is 404",
+                            "id": "31c092f1f5d76b3f110036444dc4bd47",
+                            "passes": 0
+                        },
+                        "GET _ngrx_record_v1_levels_12100 response time < 500ms": {
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_levels_12100 response time < 500ms",
+                            "path": "::GET _ngrx_record_v1_levels_12100::GET _ngrx_record_v1_levels_12100 response time < 500ms",
+                            "id": "61f5417dcbca51815e256cd8f0eda412",
+                            "passes": 4
+                        },
+                        "GET _ngrx_record_v1_levels_12100 response time < 1000ms": {
+                            "name": "GET _ngrx_record_v1_levels_12100 response time < 1000ms",
+                            "path": "::GET _ngrx_record_v1_levels_12100::GET _ngrx_record_v1_levels_12100 response time < 1000ms",
+                            "id": "506c68e042811510b28686e5381d339e",
+                            "passes": 4,
+                            "fails": 0
+                        }
+                    }
+            },
+            "GET _ngrx_record_v1_levels_12100_advanced_workflow_configura": {
+                "name": "GET _ngrx_record_v1_levels_12100_advanced_workflow_configura",
+                "path": "::GET _ngrx_record_v1_levels_12100_advanced_workflow_configura",
+                "id": "37d8adf05d284f6924c6f83184901716",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_levels_12100_advanced_workflow_configura status is 200": {
+                            "name": "GET _ngrx_record_v1_levels_12100_advanced_workflow_configura status is 200",
+                            "path": "::GET _ngrx_record_v1_levels_12100_advanced_workflow_configura::GET _ngrx_record_v1_levels_12100_advanced_workflow_configura status is 200",
+                            "id": "809cca185a71467c77c554d9c4f736bf",
+                            "passes": 4,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_levels_12100_advanced_workflow_configura status is 404": {
+                            "name": "GET _ngrx_record_v1_levels_12100_advanced_workflow_configura status is 404",
+                            "path": "::GET _ngrx_record_v1_levels_12100_advanced_workflow_configura::GET _ngrx_record_v1_levels_12100_advanced_workflow_configura status is 404",
+                            "id": "a40767c9c7e9da6b926e1098c6a1c8a9",
+                            "passes": 4,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_levels_12100_advanced_workflow_configura response time < 500ms": {
+                            "id": "abbe7057158568b15182b8df9c229d2b",
+                            "passes": 4,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_levels_12100_advanced_workflow_configura response time < 500ms",
+                            "path": "::GET _ngrx_record_v1_levels_12100_advanced_workflow_configura::GET _ngrx_record_v1_levels_12100_advanced_workflow_configura response time < 500ms"
+                        },
+                        "GET _ngrx_record_v1_levels_12100_advanced_workflow_configura response time < 1000ms": {
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_levels_12100_advanced_workflow_configura response time < 1000ms",
+                            "path": "::GET _ngrx_record_v1_levels_12100_advanced_workflow_configura::GET _ngrx_record_v1_levels_12100_advanced_workflow_configura response time < 1000ms",
+                            "id": "3b436ca3dc2ffc5a4ed59b5a1d34de29",
+                            "passes": 4
+                        }
+                    }
+            },
+            "GET _ngrx_record_v2_levels_12100_default_layout": {
+                "name": "GET _ngrx_record_v2_levels_12100_default_layout",
+                "path": "::GET _ngrx_record_v2_levels_12100_default_layout",
+                "id": "6a2edc0f3c56427f4c83a6aedbd60449",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v2_levels_12100_default_layout status is 200": {
+                            "id": "882638a0fbe03634c3f7a40afce0fb02",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v2_levels_12100_default_layout status is 200",
+                            "path": "::GET _ngrx_record_v2_levels_12100_default_layout::GET _ngrx_record_v2_levels_12100_default_layout status is 200"
+                        },
+                        "GET _ngrx_record_v2_levels_12100_default_layout status is 404": {
+                            "passes": 0,
+                            "fails": 2,
+                            "name": "GET _ngrx_record_v2_levels_12100_default_layout status is 404",
+                            "path": "::GET _ngrx_record_v2_levels_12100_default_layout::GET _ngrx_record_v2_levels_12100_default_layout status is 404",
+                            "id": "e65377633413b56b2ecccc5a45e93c1e"
+                        },
+                        "GET _ngrx_record_v2_levels_12100_default_layout response time < 500ms": {
+                            "name": "GET _ngrx_record_v2_levels_12100_default_layout response time < 500ms",
+                            "path": "::GET _ngrx_record_v2_levels_12100_default_layout::GET _ngrx_record_v2_levels_12100_default_layout response time < 500ms",
+                            "id": "96515a6be43b2641d96a0bc1d40df1b2",
+                            "passes": 0,
+                            "fails": 2
+                        },
+                        "GET _ngrx_record_v2_levels_12100_default_layout response time < 1000ms": {
+                            "path": "::GET _ngrx_record_v2_levels_12100_default_layout::GET _ngrx_record_v2_levels_12100_default_layout response time < 1000ms",
+                            "id": "2e5a04a12c12663f2ce02c0c9d6eae3e",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v2_levels_12100_default_layout response time < 1000ms"
+                        }
+                    }
+            },
+            "GET _ngrx_record_v1_levels_12100_image_fields": {
+                "name": "GET _ngrx_record_v1_levels_12100_image_fields",
+                "path": "::GET _ngrx_record_v1_levels_12100_image_fields",
+                "id": "e30b626bd7ab9eb5c4156b9b2a761016",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_levels_12100_image_fields status is 200": {
+                            "name": "GET _ngrx_record_v1_levels_12100_image_fields status is 200",
+                            "path": "::GET _ngrx_record_v1_levels_12100_image_fields::GET _ngrx_record_v1_levels_12100_image_fields status is 200",
+                            "id": "9c761ab57d1ae23534e04c0b3fb3e65c",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_levels_12100_image_fields status is 404": {
+                            "name": "GET _ngrx_record_v1_levels_12100_image_fields status is 404",
+                            "path": "::GET _ngrx_record_v1_levels_12100_image_fields::GET _ngrx_record_v1_levels_12100_image_fields status is 404",
+                            "id": "23448b81b6d2ce768d6b4a6ad8f8eaa0",
+                            "passes": 0,
+                            "fails": 2
+                        },
+                        "GET _ngrx_record_v1_levels_12100_image_fields response time < 500ms": {
+                            "name": "GET _ngrx_record_v1_levels_12100_image_fields response time < 500ms",
+                            "path": "::GET _ngrx_record_v1_levels_12100_image_fields::GET _ngrx_record_v1_levels_12100_image_fields response time < 500ms",
+                            "id": "9942d83a0c0bfc8941770f7fa79a114f",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_levels_12100_image_fields response time < 1000ms": {
+                            "name": "GET _ngrx_record_v1_levels_12100_image_fields response time < 1000ms",
+                            "path": "::GET _ngrx_record_v1_levels_12100_image_fields::GET _ngrx_record_v1_levels_12100_image_fields response time < 1000ms",
+                            "id": "f1ba499b8b2f516f0ad20ab3228aa830",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    }
+            },
+            "GET _ngrx_record_v1_modules_task_access_moduleIds_10145": {
+                "name": "GET _ngrx_record_v1_modules_task_access_moduleIds_10145",
+                "path": "::GET _ngrx_record_v1_modules_task_access_moduleIds_10145",
+                "id": "0bff4196be6130b7dfcac2d3402c6805",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_modules_task_access_moduleIds_10145 status is 200": {
+                            "name": "GET _ngrx_record_v1_modules_task_access_moduleIds_10145 status is 200",
+                            "path": "::GET _ngrx_record_v1_modules_task_access_moduleIds_10145::GET _ngrx_record_v1_modules_task_access_moduleIds_10145 status is 200",
+                            "id": "6733541a5928e6555d974c4532285f25",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_modules_task_access_moduleIds_10145 status is 404": {
+                            "name": "GET _ngrx_record_v1_modules_task_access_moduleIds_10145 status is 404",
+                            "path": "::GET _ngrx_record_v1_modules_task_access_moduleIds_10145::GET _ngrx_record_v1_modules_task_access_moduleIds_10145 status is 404",
+                            "id": "4f2055ae3cab771725ceb68192171575",
+                            "passes": 0,
+                            "fails": 2
+                        },
+                        "GET _ngrx_record_v1_modules_task_access_moduleIds_10145 response time < 500ms": {
+                            "id": "0eed76d7aa5a6becea417de88b9bdb13",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_modules_task_access_moduleIds_10145 response time < 500ms",
+                            "path": "::GET _ngrx_record_v1_modules_task_access_moduleIds_10145::GET _ngrx_record_v1_modules_task_access_moduleIds_10145 response time < 500ms"
+                        },
+                        "GET _ngrx_record_v1_modules_task_access_moduleIds_10145 response time < 1000ms": {
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_modules_task_access_moduleIds_10145 response time < 1000ms",
+                            "path": "::GET _ngrx_record_v1_modules_task_access_moduleIds_10145::GET _ngrx_record_v1_modules_task_access_moduleIds_10145 response time < 1000ms",
+                            "id": "90285327e8efd46b65cde3b7c3399da2",
+                            "passes": 2
+                        }
+                    }
+            },
+            "POST _ngrx_record_v1_contents": {
+                "id": "a2306df0fe5a0454ae864db2ebadbd20",
+                "groups": {},
+                "checks": {
+                        "POST _ngrx_record_v1_contents status is 200": {
+                            "name": "POST _ngrx_record_v1_contents status is 200",
+                            "path": "::POST _ngrx_record_v1_contents::POST _ngrx_record_v1_contents status is 200",
+                            "id": "eefb3c91530d0c5ba61c659052a0fab7",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "POST _ngrx_record_v1_contents status is 404": {
+                            "path": "::POST _ngrx_record_v1_contents::POST _ngrx_record_v1_contents status is 404",
+                            "id": "b8d71ce6dc13cf48cce516330f5c4454",
+                            "passes": 0,
+                            "fails": 2,
+                            "name": "POST _ngrx_record_v1_contents status is 404"
+                        },
+                        "POST _ngrx_record_v1_contents response time < 500ms": {
+                            "path": "::POST _ngrx_record_v1_contents::POST _ngrx_record_v1_contents response time < 500ms",
+                            "id": "031685f557868827ec03e13d95b292e1",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "POST _ngrx_record_v1_contents response time < 500ms"
+                        },
+                        "POST _ngrx_record_v1_contents response time < 1000ms": {
+                            "fails": 0,
+                            "name": "POST _ngrx_record_v1_contents response time < 1000ms",
+                            "path": "::POST _ngrx_record_v1_contents::POST _ngrx_record_v1_contents response time < 1000ms",
+                            "id": "50957caaf93d8002d956cade098810e0",
+                            "passes": 2
+                        }
+                    },
+                "name": "POST _ngrx_record_v1_contents",
+                "path": "::POST _ngrx_record_v1_contents"
+            },
+            "GET _ngrx_record_v2_contents_788029_summary": {
+                "path": "::GET _ngrx_record_v2_contents_788029_summary",
+                "id": "b642997f9be488ff2e7af963c64c3d57",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v2_contents_788029_summary status is 200": {
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v2_contents_788029_summary status is 200",
+                            "path": "::GET _ngrx_record_v2_contents_788029_summary::GET _ngrx_record_v2_contents_788029_summary status is 200",
+                            "id": "7b8298379090a5ecae35fee4c832d08c"
+                        },
+                        "GET _ngrx_record_v2_contents_788029_summary status is 404": {
+                            "id": "35257982df62c8cdfe8b8b693a73d00c",
+                            "passes": 0,
+                            "fails": 2,
+                            "name": "GET _ngrx_record_v2_contents_788029_summary status is 404",
+                            "path": "::GET _ngrx_record_v2_contents_788029_summary::GET _ngrx_record_v2_contents_788029_summary status is 404"
+                        },
+                        "GET _ngrx_record_v2_contents_788029_summary response time < 500ms": {
+                            "name": "GET _ngrx_record_v2_contents_788029_summary response time < 500ms",
+                            "path": "::GET _ngrx_record_v2_contents_788029_summary::GET _ngrx_record_v2_contents_788029_summary response time < 500ms",
+                            "id": "6ee8756ab2774ca621002dcf82ddd595",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v2_contents_788029_summary response time < 1000ms": {
+                            "name": "GET _ngrx_record_v2_contents_788029_summary response time < 1000ms",
+                            "path": "::GET _ngrx_record_v2_contents_788029_summary::GET _ngrx_record_v2_contents_788029_summary response time < 1000ms",
+                            "id": "2e38fe71f3ed7c586c83802523c19c6f",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    },
+                "name": "GET _ngrx_record_v2_contents_788029_summary"
+            },
+            "GET _ngrx_record_v1_contents_788029": {
+                "name": "GET _ngrx_record_v1_contents_788029",
+                "path": "::GET _ngrx_record_v1_contents_788029",
+                "id": "766632d724e1e414f792e0d5d406ddb9",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_contents_788029 status is 200": {
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_contents_788029 status is 200",
+                            "path": "::GET _ngrx_record_v1_contents_788029::GET _ngrx_record_v1_contents_788029 status is 200",
+                            "id": "e02c1236d8ac19e47ca287c26d6fb38a"
+                        },
+                        "GET _ngrx_record_v1_contents_788029 status is 404": {
+                            "name": "GET _ngrx_record_v1_contents_788029 status is 404",
+                            "path": "::GET _ngrx_record_v1_contents_788029::GET _ngrx_record_v1_contents_788029 status is 404",
+                            "id": "93d9322a729731360c17b96992c55f38",
+                            "passes": 0,
+                            "fails": 2
+                        },
+                        "GET _ngrx_record_v1_contents_788029 response time < 500ms": {
+                            "name": "GET _ngrx_record_v1_contents_788029 response time < 500ms",
+                            "path": "::GET _ngrx_record_v1_contents_788029::GET _ngrx_record_v1_contents_788029 response time < 500ms",
+                            "id": "f7fd257a180e9877b7f858afb40b68e4",
+                            "passes": 1,
+                            "fails": 1
+                        },
+                        "GET _ngrx_record_v1_contents_788029 response time < 1000ms": {
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_contents_788029 response time < 1000ms",
+                            "path": "::GET _ngrx_record_v1_contents_788029::GET _ngrx_record_v1_contents_788029 response time < 1000ms",
+                            "id": "d4d50b5622e920967f1431635c309edc",
+                            "passes": 2
+                        }
+                    }
+            },
+            "POST _ngrx_record_v1_levels_12100_contents_788029_history": {
+                "checks": {
+                    "POST _ngrx_record_v1_levels_12100_contents_788029_history status is 200": {
+                        "id": "da12dc0be6140b4abfa18d42930199bc",
+                        "passes": 2,
+                        "fails": 0,
+                        "name": "POST _ngrx_record_v1_levels_12100_contents_788029_history status is 200",
+                        "path": "::POST _ngrx_record_v1_levels_12100_contents_788029_history::POST _ngrx_record_v1_levels_12100_contents_788029_history status is 200"
+                    },
+                    "POST _ngrx_record_v1_levels_12100_contents_788029_history status is 404": {
+                        "fails": 2,
+                        "name": "POST _ngrx_record_v1_levels_12100_contents_788029_history status is 404",
+                        "path": "::POST _ngrx_record_v1_levels_12100_contents_788029_history::POST _ngrx_record_v1_levels_12100_contents_788029_history status is 404",
+                        "id": "2d96e8ede2c9746f9520da0670de01cb",
+                        "passes": 0
+                    },
+                    "POST _ngrx_record_v1_levels_12100_contents_788029_history response time < 500ms": {
+                        "id": "690b2e543796ac9fe2a60d194d68204a",
+                        "passes": 2,
+                        "fails": 0,
+                        "name": "POST _ngrx_record_v1_levels_12100_contents_788029_history response time < 500ms",
+                        "path": "::POST _ngrx_record_v1_levels_12100_contents_788029_history::POST _ngrx_record_v1_levels_12100_contents_788029_history response time < 500ms"
+                    },
+                    "POST _ngrx_record_v1_levels_12100_contents_788029_history response time < 1000ms": {
+                        "name": "POST _ngrx_record_v1_levels_12100_contents_788029_history response time < 1000ms",
+                        "path": "::POST _ngrx_record_v1_levels_12100_contents_788029_history::POST _ngrx_record_v1_levels_12100_contents_788029_history response time < 1000ms",
+                        "id": "4a46213dc342952981c858325357ae16",
+                        "passes": 2,
+                        "fails": 0
+                    }
+                },
+                "name": "POST _ngrx_record_v1_levels_12100_contents_788029_history",
+                "path": "::POST _ngrx_record_v1_levels_12100_contents_788029_history",
+                "id": "7148b89e609a2b42212ef37ca2d472ce",
+                "groups": {}
+            },
+            "GET _ngrx_record_v1_contents_788029_data_driven_events": {
+                "name": "GET _ngrx_record_v1_contents_788029_data_driven_events",
+                "path": "::GET _ngrx_record_v1_contents_788029_data_driven_events",
+                "id": "04f95ad34c161e219cfbd8cc1e873413",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_contents_788029_data_driven_events status is 200": {
+                            "name": "GET _ngrx_record_v1_contents_788029_data_driven_events status is 200",
+                            "path": "::GET _ngrx_record_v1_contents_788029_data_driven_events::GET _ngrx_record_v1_contents_788029_data_driven_events status is 200",
+                            "id": "62e7b73453033e9a2611ac355336d2e5",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_contents_788029_data_driven_events status is 404": {
+                            "name": "GET _ngrx_record_v1_contents_788029_data_driven_events status is 404",
+                            "path": "::GET _ngrx_record_v1_contents_788029_data_driven_events::GET _ngrx_record_v1_contents_788029_data_driven_events status is 404",
+                            "id": "d51510ab02a93035ecfe6a9e077fe064",
+                            "passes": 0,
+                            "fails": 2
+                        },
+                        "GET _ngrx_record_v1_contents_788029_data_driven_events response time < 500ms": {
+                            "name": "GET _ngrx_record_v1_contents_788029_data_driven_events response time < 500ms",
+                            "path": "::GET _ngrx_record_v1_contents_788029_data_driven_events::GET _ngrx_record_v1_contents_788029_data_driven_events response time < 500ms",
+                            "id": "34cb24154a4a2e331a78b491655e0f28",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_contents_788029_data_driven_events response time < 1000ms": {
+                            "name": "GET _ngrx_record_v1_contents_788029_data_driven_events response time < 1000ms",
+                            "path": "::GET _ngrx_record_v1_contents_788029_data_driven_events::GET _ngrx_record_v1_contents_788029_data_driven_events response time < 1000ms",
+                            "id": "07c16f737f168e94b836a4d5ecd30eb6",
+                            "passes": 2,
+                            "fails": 0
+                        }
+                    }
+            },
+            "GET _ngrx_record_v1_contents_788029_layout": {
+                "name": "GET _ngrx_record_v1_contents_788029_layout",
+                "path": "::GET _ngrx_record_v1_contents_788029_layout",
+                "id": "5ba7bfbb6cb38868b00116325790b82f",
+                "groups": {},
+                "checks": {
+                        "GET _ngrx_record_v1_contents_788029_layout status is 200": {
+                            "name": "GET _ngrx_record_v1_contents_788029_layout status is 200",
+                            "path": "::GET _ngrx_record_v1_contents_788029_layout::GET _ngrx_record_v1_contents_788029_layout status is 200",
+                            "id": "cb602a722604d54cd79213d7738bbb9b",
+                            "passes": 2,
+                            "fails": 0
+                        },
+                        "GET _ngrx_record_v1_contents_788029_layout status is 404": {
+                            "path": "::GET _ngrx_record_v1_contents_788029_layout::GET _ngrx_record_v1_contents_788029_layout status is 404",
+                            "id": "eced666fdd58148d0d70d8d49dbb17f1",
+                            "passes": 0,
+                            "fails": 2,
+                            "name": "GET _ngrx_record_v1_contents_788029_layout status is 404"
+                        },
+                        "GET _ngrx_record_v1_contents_788029_layout response time < 500ms": {
+                            "id": "b8c22cc9aee5b8b0acc08ce8c0298567",
+                            "passes": 2,
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_contents_788029_layout response time < 500ms",
+                            "path": "::GET _ngrx_record_v1_contents_788029_layout::GET _ngrx_record_v1_contents_788029_layout response time < 500ms"
+                        },
+                        "GET _ngrx_record_v1_contents_788029_layout response time < 1000ms": {
+                            "fails": 0,
+                            "name": "GET _ngrx_record_v1_contents_788029_layout response time < 1000ms",
+                            "path": "::GET _ngrx_record_v1_contents_788029_layout::GET _ngrx_record_v1_contents_788029_layout response time < 1000ms",
+                            "id": "8dda8ef1d3f733e121082cb06da7c7f2",
+                            "passes": 2
+                        }
+                    }
+            }
+        },
+        "checks": {},
+        "name": "",
+        "path": ""
+    }
+}

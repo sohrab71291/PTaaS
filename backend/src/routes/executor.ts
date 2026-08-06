@@ -7,6 +7,7 @@ import { dispatchJob } from '../services/jobDispatcher';
 import { registerAutoFixRun } from '../services/autoFixRunner';
 import { agentRegistry } from '../services/agentRegistry';
 import { injectCredentials, ScriptCredential } from '../services/k6PromptBlocks';
+import { fetchLatestScript } from '../services/scriptSource';
 import {
   getAnthropicClient, hasAnthropicCredentials, isOverloadedError,
   CLAUDE_MODEL, MAX_STREAM_ATTEMPTS, STREAM_BACKOFF_MS,
@@ -89,7 +90,7 @@ router.post('/executor/credentials', uploadCsv.single('file'), async (req, res) 
 
 router.post('/executor/run', upload.single('script'), async (req, res) => {
   try {
-    const { vus, duration, stages, profileType, envVars, testName, slos, credentialBatchId, autoFix, maxAttempts } = req.body;
+    const { vus, duration, stages, profileType, envVars, testName, slos, credentialBatchId, autoFix, maxAttempts, specId } = req.body;
     let script: string;
 
     if (req.file) {
@@ -101,12 +102,32 @@ router.post('/executor/run', upload.single('script'), async (req, res) => {
       return;
     }
 
+    // A saved test suite's script is never trusted from the client (locally
+    // cached/edited copy, session storage, DB snapshot) — the repo is the
+    // source of truth, so pull the current file fresh right before dispatch.
+    // Ad-hoc runs (paste/upload with no specId) are unaffected.
+    let spec: { id: string; name: string } | null = null;
+    if (typeof specId === 'string' && specId.trim()) {
+      spec = await prisma.testSpec.findUnique({ where: { id: specId.trim() }, select: { id: true, name: true } });
+      if (!spec) {
+        res.status(404).json({ error: 'Test suite not found' });
+        return;
+      }
+      try {
+        script = await fetchLatestScript(spec.name);
+      } catch (err: any) {
+        res.status(502).json({ error: `Failed to fetch script from repo for "${spec.name}": ${err.message}` });
+        return;
+      }
+    }
+
     let parsedSlos: any[] = [];
     try { parsedSlos = slos ? (typeof slos === 'string' ? JSON.parse(slos) : slos) : []; } catch {}
 
     const execution = await prisma.execution.create({
       data: {
-        specName: (typeof testName === 'string' && testName.trim()) ? testName.trim() : 'Ad-hoc Execution',
+        specId: spec?.id,
+        specName: spec?.name || ((typeof testName === 'string' && testName.trim()) ? testName.trim() : 'Ad-hoc Execution'),
         environment: 'custom',
         status: 'queued',
         triggeredBy: (req as any).user?.email ?? 'executor',

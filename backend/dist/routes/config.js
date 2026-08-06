@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.testConnections = testConnections;
 const express_1 = require("express");
 const router = (0, express_1.Router)();
 // Public — registered before requireAuth. Exposes non-sensitive config values.
@@ -11,8 +12,8 @@ router.get('/', (_req, res) => {
         influxdbConfigured: !!(process.env.INFLUXDB_TOKEN && process.env.INFLUXDB_ORG && process.env.INFLUXDB_BUCKET),
     });
 });
-// Public — tests live connectivity to InfluxDB and Grafana
-router.post('/test-connections', async (_req, res) => {
+// Shared by the /test-connections route and the automatic startup check in index.ts.
+async function testConnections() {
     const results = {
         influxdb: { connected: false, message: 'Not configured', latencyMs: null },
         grafana: { connected: false, message: 'Not configured', latencyMs: null },
@@ -78,6 +79,10 @@ router.post('/test-connections', async (_req, res) => {
                 : `Connection refused — ${err.message}`;
         }
     }
-    res.json(results);
+    return results;
+}
+// Public — tests live connectivity to InfluxDB and Grafana
+router.post('/test-connections', async (_req, res) => {
+    res.json(await testConnections());
 });
 exports.default = router;

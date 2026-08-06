@@ -20,7 +20,11 @@ interface HarImportResult {
   filesProcessed: number;
 }
 
-const MAX_HAR_FILE_SIZE_MB = 200;
+// Matches the backend's multer limit (harGenerate.ts/upload.ts) — capped below
+// 200MB because the raw file is later base64'd into a jsonb column, and
+// Postgres caps a single jsonb string at ~256MB (200MB raw would exceed that
+// once encoded, so the suite would generate but then fail to save).
+const MAX_HAR_FILE_SIZE_MB = 150;
 
 interface HarImportPanelProps {
   loadProfile?: {

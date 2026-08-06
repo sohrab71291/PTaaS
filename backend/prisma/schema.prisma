@@ -67,6 +67,7 @@ model Execution {
   specName           String
   environment        String
   status             String    @default("queued")
+  errorMessage        String?
   triggeredBy        String
   startedAt          DateTime?
   finishedAt         DateTime?

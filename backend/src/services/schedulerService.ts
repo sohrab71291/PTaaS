@@ -1,7 +1,6 @@
 import * as cron from 'node-cron';
 import { CronExpressionParser } from 'cron-parser';
 import prisma from '../lib/prisma';
-import { generateK6Script } from './k6Generator';
 import { dispatchJob } from './jobDispatcher';
 import { notificationService } from './notificationService';
 import { fetchScript as fetchScriptFromGithub } from './githubService';
@@ -84,41 +83,35 @@ async function runSchedule(schedule: Schedule) {
     stages: (spec.loadProfile as any)?.stages || [],
   };
 
-  if ((schedule as any).fetchFromGithub) {
-    // Fetch + dispatch happens off the scheduler's critical path — the cron
-    // tick (and any triggerNow HTTP request) returns as soon as the
-    // Execution row is queued, without waiting on the GitHub round-trip.
-    const useGitlab = (schedule as any).scmProvider === 'gitlab';
-    const fetchPromise = useGitlab
-      ? fetchScriptFromGitlab(spec.id, {
-          repoUrl: (schedule as any).gitlabRepoUrl,
-          branch: (schedule as any).gitlabBranch,
-          scriptPath: (schedule as any).gitlabScriptPath,
-          token: (schedule as any).gitlabToken,
-        })
-      : fetchScriptFromGithub(spec.id, {
-          repoUrl: (schedule as any).githubRepoUrl,
-          branch: (schedule as any).githubBranch,
-          scriptPath: (schedule as any).githubScriptPath,
-          token: (schedule as any).githubToken,
-        });
-
-    fetchPromise
-      .then(script => dispatchJob(execution.id, script, dispatchConfig))
-      .catch(async (err: any) => {
-        console.warn(`[Scheduler] ${useGitlab ? 'GitLab' : 'GitHub'} fetch/dispatch failed for schedule ${schedule.id}: ${err.message}`);
-        await prisma.execution.update({ where: { id: execution.id }, data: { status: 'fail' } });
+  // Scripts are always pulled fresh from the configured repo at run time —
+  // never from the TestSpec's locally stored generatedScript — so a schedule
+  // always executes whatever is currently committed. Uses the schedule's own
+  // repo override if set (githubRepoUrl/branch/scriptPath/token, or the
+  // GitLab equivalents), otherwise falls back to the GITHUB_*/GITLAB_* env vars.
+  // Fetch + dispatch happens off the scheduler's critical path — the cron
+  // tick (and any triggerNow HTTP request) returns as soon as the Execution
+  // row is queued, without waiting on the repo round-trip.
+  const useGitlab = (schedule as any).scmProvider === 'gitlab';
+  const fetchPromise = useGitlab
+    ? fetchScriptFromGitlab(spec.name, {
+        repoUrl: (schedule as any).gitlabRepoUrl,
+        branch: (schedule as any).gitlabBranch,
+        scriptPath: (schedule as any).gitlabScriptPath,
+        token: (schedule as any).gitlabToken,
+      })
+    : fetchScriptFromGithub(spec.name, {
+        repoUrl: (schedule as any).githubRepoUrl,
+        branch: (schedule as any).githubBranch,
+        scriptPath: (schedule as any).githubScriptPath,
+        token: (schedule as any).githubToken,
       });
-  } else {
-    try {
-      const script = generateK6Script(spec as any, baseUrl);
-      await dispatchJob(execution.id, script, dispatchConfig);
-    } catch (err: any) {
-      console.warn(`[Scheduler] Dispatch failed for schedule ${schedule.id}: ${err.message}`);
-      lastRunStatus = 'failed';
-      finalExecution = await prisma.execution.update({ where: { id: execution.id }, data: { status: 'fail' } });
-    }
-  }
+
+  fetchPromise
+    .then(script => dispatchJob(execution.id, script, dispatchConfig))
+    .catch(async (err: any) => {
+      console.warn(`[Scheduler] ${useGitlab ? 'GitLab' : 'GitHub'} fetch/dispatch failed for schedule ${schedule.id}: ${err.message}`);
+      await prisma.execution.update({ where: { id: execution.id }, data: { status: 'fail', errorMessage: err.message } });
+    });
 
   await prisma.schedule.update({
     where: { id: schedule.id },

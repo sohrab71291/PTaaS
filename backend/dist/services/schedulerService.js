@@ -37,44 +37,47 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.schedulerService = void 0;
-const fs_1 = __importDefault(require("fs"));
-const path_1 = __importDefault(require("path"));
 const cron = __importStar(require("node-cron"));
+const cron_parser_1 = require("cron-parser");
 const prisma_1 = __importDefault(require("../lib/prisma"));
-const k6Generator_1 = require("./k6Generator");
 const jobDispatcher_1 = require("./jobDispatcher");
 const notificationService_1 = require("./notificationService");
-const DATA_DIR = path_1.default.join(__dirname, '../../data');
-const FILE = path_1.default.join(DATA_DIR, 'schedules.json');
+const githubService_1 = require("./githubService");
+const gitlabService_1 = require("./gitlabService");
 const activeTasks = new Map();
-function readSchedules() {
+function computeNextRun(cronExpression) {
     try {
-        return JSON.parse(fs_1.default.readFileSync(FILE, 'utf-8'));
-    }
-    catch {
-        return [];
-    }
-}
-function writeSchedules(data) {
-    if (!fs_1.default.existsSync(DATA_DIR))
-        fs_1.default.mkdirSync(DATA_DIR, { recursive: true });
-    fs_1.default.writeFileSync(FILE, JSON.stringify(data, null, 2));
-}
-async function runSchedule(schedule) {
-    console.log(`[Scheduler] Triggering schedule "${schedule.name}" (${schedule.id})`);
-    const spec = await prisma_1.default.testSpec.findUnique({ where: { id: schedule.specId } });
-    if (!spec) {
-        console.warn(`[Scheduler] Spec ${schedule.specId} not found for schedule ${schedule.id}`);
-        return;
-    }
-    const specRequest = spec.request;
-    const specOrigin = (() => { try {
-        return new URL(specRequest?.url).origin;
+        return cron_parser_1.CronExpressionParser.parse(cronExpression, { tz: 'UTC' }).next().toDate();
     }
     catch {
         return null;
-    } })();
-    let baseUrl = specOrigin ?? 'http://localhost:3000';
+    }
+}
+async function runSchedule(schedule) {
+    console.log(`[Scheduler] Triggering schedule "${schedule.name}" (${schedule.id})`);
+    // Concurrency guard — if a run for this schedule is already in flight, skip this tick
+    // (mirrors GitHub Actions' concurrency-group behavior instead of stacking runs).
+    const inFlight = await prisma_1.default.execution.findFirst({
+        where: { scheduleId: schedule.id, status: { in: ['queued', 'running'] } },
+    });
+    if (inFlight) {
+        console.warn(`[Scheduler] Skipping "${schedule.name}" — previous run ${inFlight.id} still ${inFlight.status}`);
+        await prisma_1.default.schedule.update({
+            where: { id: schedule.id },
+            data: { lastRunAt: new Date(), lastRunStatus: 'skipped', nextRunAt: computeNextRun(schedule.cronExpression) },
+        });
+        return null;
+    }
+    const spec = await prisma_1.default.testSpec.findUnique({ where: { id: schedule.specId } });
+    if (!spec) {
+        console.warn(`[Scheduler] Spec ${schedule.specId} not found for schedule ${schedule.id}`);
+        await prisma_1.default.schedule.update({
+            where: { id: schedule.id },
+            data: { lastRunAt: new Date(), lastRunStatus: 'failed', nextRunAt: computeNextRun(schedule.cronExpression) },
+        });
+        return null;
+    }
+    let baseUrl = 'http://localhost:3000';
     let envName = 'local';
     if (schedule.environmentId) {
         const env = await prisma_1.default.environment.findUnique({ where: { id: schedule.environmentId } });
@@ -97,6 +100,7 @@ async function runSchedule(schedule) {
             environment: envName,
             status: 'queued',
             triggeredBy: `schedule:${schedule.name}`,
+            scheduleId: schedule.id,
             thresholdBreaches: 0,
             checksPassed: 0,
             checksFailed: 0,
@@ -106,24 +110,49 @@ async function runSchedule(schedule) {
             slos: spec.slos ?? [],
         },
     });
-    try {
-        const script = (0, k6Generator_1.generateK6Script)(spec, baseUrl);
-        await (0, jobDispatcher_1.dispatchJob)(execution.id, script, {
-            baseUrl,
-            profileType: spec.loadProfile?.type || 'staged',
-            stages: spec.loadProfile?.stages || [],
+    let lastRunStatus = 'dispatched';
+    let finalExecution = execution;
+    const dispatchConfig = {
+        baseUrl,
+        profileType: spec.loadProfile?.type || 'staged',
+        stages: spec.loadProfile?.stages || [],
+    };
+    // Scripts are always pulled fresh from the configured repo at run time —
+    // never from the TestSpec's locally stored generatedScript — so a schedule
+    // always executes whatever is currently committed. Uses the schedule's own
+    // repo override if set (githubRepoUrl/branch/scriptPath/token, or the
+    // GitLab equivalents), otherwise falls back to the GITHUB_*/GITLAB_* env vars.
+    // Fetch + dispatch happens off the scheduler's critical path — the cron
+    // tick (and any triggerNow HTTP request) returns as soon as the Execution
+    // row is queued, without waiting on the repo round-trip.
+    const useGitlab = schedule.scmProvider === 'gitlab';
+    const fetchPromise = useGitlab
+        ? (0, gitlabService_1.fetchScript)(spec.name, {
+            repoUrl: schedule.gitlabRepoUrl,
+            branch: schedule.gitlabBranch,
+            scriptPath: schedule.gitlabScriptPath,
+            token: schedule.gitlabToken,
+        })
+        : (0, githubService_1.fetchScript)(spec.name, {
+            repoUrl: schedule.githubRepoUrl,
+            branch: schedule.githubBranch,
+            scriptPath: schedule.githubScriptPath,
+            token: schedule.githubToken,
         });
-    }
-    catch (err) {
-        console.warn(`[Scheduler] Dispatch failed for schedule ${schedule.id}: ${err.message}`);
-    }
-    // Update lastRunAt
-    const all = readSchedules();
-    const idx = all.findIndex(s => s.id === schedule.id);
-    if (idx !== -1) {
-        all[idx].lastRunAt = new Date().toISOString();
-        writeSchedules(all);
-    }
+    fetchPromise
+        .then(script => (0, jobDispatcher_1.dispatchJob)(execution.id, script, dispatchConfig))
+        .catch(async (err) => {
+        console.warn(`[Scheduler] ${useGitlab ? 'GitLab' : 'GitHub'} fetch/dispatch failed for schedule ${schedule.id}: ${err.message}`);
+        await prisma_1.default.execution.update({ where: { id: execution.id }, data: { status: 'fail', errorMessage: err.message } });
+    });
+    await prisma_1.default.schedule.update({
+        where: { id: schedule.id },
+        data: {
+            lastRunAt: new Date(),
+            lastRunStatus,
+            nextRunAt: computeNextRun(schedule.cronExpression),
+        },
+    });
     // Dispatch notifications if configured
     const notifConfigs = notificationService_1.notificationService.listConfigs();
     const targetConfig = schedule.notificationConfigId
@@ -145,7 +174,7 @@ async function runSchedule(schedule) {
             }
         }, 5 * 60 * 1000); // check after 5 min
     }
-    return execution;
+    return finalExecution;
 }
 function scheduleTask(schedule) {
     if (!cron.validate(schedule.cronExpression)) {
@@ -165,35 +194,41 @@ function scheduleTask(schedule) {
     console.log(`[Scheduler] Registered schedule "${schedule.name}" (${schedule.cronExpression})`);
 }
 exports.schedulerService = {
-    init: () => {
-        const schedules = readSchedules();
+    init: async () => {
+        const schedules = await prisma_1.default.schedule.findMany();
         schedules.forEach(scheduleTask);
         console.log(`[Scheduler] Initialized ${schedules.length} schedules`);
     },
-    listSchedules: () => readSchedules(),
-    createSchedule: (schedule) => {
-        const all = readSchedules();
-        all.push(schedule);
-        writeSchedules(all);
+    listSchedules: () => prisma_1.default.schedule.findMany({ orderBy: { createdAt: 'desc' } }),
+    createSchedule: async (data) => {
+        const schedule = await prisma_1.default.schedule.create({
+            data: { ...data, nextRunAt: data.enabled ? computeNextRun(data.cronExpression) : null },
+        });
         scheduleTask(schedule);
         return schedule;
     },
-    updateSchedule: (id, updates) => {
-        const all = readSchedules();
-        const idx = all.findIndex(s => s.id === id);
-        if (idx === -1)
+    updateSchedule: async (id, updates) => {
+        const existing = await prisma_1.default.schedule.findUnique({ where: { id } });
+        if (!existing)
             return null;
-        all[idx] = { ...all[idx], ...updates, id, updatedAt: new Date().toISOString() };
-        writeSchedules(all);
-        scheduleTask(all[idx]);
-        return all[idx];
+        const merged = { ...existing, ...updates };
+        const schedule = await prisma_1.default.schedule.update({
+            where: { id },
+            data: {
+                ...updates,
+                nextRunAt: merged.enabled ? computeNextRun(merged.cronExpression) : null,
+            },
+        });
+        scheduleTask(schedule);
+        return schedule;
     },
-    deleteSchedule: (id) => {
-        const all = readSchedules();
-        const next = all.filter(s => s.id !== id);
-        if (next.length === all.length)
+    deleteSchedule: async (id) => {
+        try {
+            await prisma_1.default.schedule.delete({ where: { id } });
+        }
+        catch {
             return false;
-        writeSchedules(next);
+        }
         if (activeTasks.has(id)) {
             activeTasks.get(id).stop();
             activeTasks.delete(id);
@@ -201,9 +236,17 @@ exports.schedulerService = {
         return true;
     },
     triggerNow: async (id) => {
-        const schedule = readSchedules().find(s => s.id === id);
+        const schedule = await prisma_1.default.schedule.findUnique({ where: { id } });
         if (!schedule)
-            return null;
-        return runSchedule(schedule);
+            return { notFound: true };
+        const execution = await runSchedule(schedule);
+        if (!execution)
+            return { skipped: true };
+        return { execution };
     },
+    listExecutions: (id) => prisma_1.default.execution.findMany({
+        where: { scheduleId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+    }),
 };

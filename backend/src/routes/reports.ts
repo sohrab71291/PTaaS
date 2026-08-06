@@ -44,6 +44,18 @@ router.get('/:executionId', async (req: Request, res: Response) => {
     }).catch(() => {});
   }
 
+  // Stored errorRate is a decimal (0-1, canonical unit used by SLO
+  // evaluation/notifications) — convert to % to match the frontend's display
+  // convention. This must happen unconditionally: it previously only ran
+  // inside the `if (grafanaMetrics)` branch below, so whenever the requestsRaw
+  // Influx query returned nothing (e.g. no matching points for that time
+  // window), the raw decimal leaked straight through to the frontend, which
+  // renders `metrics.errorRate` assuming it is already a percentage — a
+  // genuine 7.55% error rate displayed as ~0.08%.
+  if (metrics && (metrics as any).errorRate != null) {
+    metrics = { ...metrics, errorRate: (metrics as any).errorRate * 100 };
+  }
+
   // If requestsRaw produced richer metrics, promote them to the main metrics object
   if (grafanaMetrics) {
     metricsSource = 'requestsRaw';
@@ -54,12 +66,6 @@ router.get('/:executionId', async (req: Request, res: Response) => {
     // showed live/at completion, which was recorded straight from the run
     // itself. Recomputing it here made the report silently diverge from what
     // the user already saw on the Executor page for this exact execution.
-    // Stored errorRate is a decimal (0-1, canonical unit used by SLO
-    // evaluation/notifications) — convert to % to match the rest of this
-    // response and the frontend's display convention.
-    const executionErrorRatePct = (metrics as any)?.errorRate != null
-      ? (metrics as any).errorRate * 100
-      : null;
     // Merge — requestsRaw is authoritative for these fields
     metrics = {
       ...(metrics ?? {}),
@@ -69,7 +75,7 @@ router.get('/:executionId', async (req: Request, res: Response) => {
       p99:           grafanaMetrics.p99,
       avg:           grafanaMetrics.avgResponseTime,
       rps:           grafanaMetrics.rps,
-      errorRate:     executionErrorRatePct ?? grafanaMetrics.errorRate * 100,
+      errorRate:     (metrics as any)?.errorRate ?? grafanaMetrics.errorRate * 100,
       maxVUs:        grafanaMetrics.maxVUs || (metrics as any)?.maxVUs || 0,
       totalRequests: grafanaMetrics.requestCount,
     };

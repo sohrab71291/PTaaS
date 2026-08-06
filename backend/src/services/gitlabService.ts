@@ -1,3 +1,5 @@
+import { slugify } from './slug';
+
 export interface ScheduleGitlabConfig {
   repoUrl?: string | null;
   branch?: string | null;
@@ -40,8 +42,8 @@ function getConfig(override?: ScheduleGitlabConfig) {
   };
 }
 
-function scriptPath(specId: string, scriptsPath: string): string {
-  return `${scriptsPath}/${specId}.js`;
+function scriptPath(specName: string, scriptsPath: string): string {
+  return `${scriptsPath}/${slugify(specName)}.js`;
 }
 
 async function apiFetch(url: string, token: string, init?: RequestInit) {
@@ -51,14 +53,14 @@ async function apiFetch(url: string, token: string, init?: RequestInit) {
   });
 }
 
-export async function pushScript(specId: string, content: string, message: string): Promise<void> {
+export async function pushScript(specId: string, specName: string, content: string, message: string): Promise<void> {
   const config = getConfig();
   if (!config) {
     console.warn('[GitLab] Skipping script push — GITLAB_TOKEN/GITLAB_PROJECT not configured');
     return;
   }
 
-  const path = config.explicitScriptPath || scriptPath(specId, config.scriptsPath);
+  const path = config.explicitScriptPath || scriptPath(specName, config.scriptsPath);
   const filesUrl = `${config.baseUrl}/api/v4/projects/${config.projectId}/repository/files/${encodeURIComponent(path)}`;
 
   try {
@@ -75,17 +77,17 @@ export async function pushScript(specId: string, content: string, message: strin
       throw new Error(`GitLab API responded ${res.status}: ${await res.text()}`);
     }
   } catch (err: any) {
-    console.warn(`[GitLab] Failed to push script for spec ${specId}: ${err.message}`);
+    console.warn(`[GitLab] Failed to push script for spec ${specId} (${specName}): ${err.message}`);
   }
 }
 
-export async function fetchScript(specId: string, override?: ScheduleGitlabConfig): Promise<string> {
+export async function fetchScript(specName: string, override?: ScheduleGitlabConfig): Promise<string> {
   const config = getConfig(override);
   if (!config) {
     throw new Error('GitLab not configured — set a repo URL + token on the schedule, or GITLAB_TOKEN/GITLAB_PROJECT env vars');
   }
 
-  const path = config.explicitScriptPath || scriptPath(specId, config.scriptsPath);
+  const path = config.explicitScriptPath || scriptPath(specName, config.scriptsPath);
   const filesUrl = `${config.baseUrl}/api/v4/projects/${config.projectId}/repository/files/${encodeURIComponent(path)}/raw?ref=${encodeURIComponent(config.branch)}`;
 
   const res = await apiFetch(filesUrl, config.token);

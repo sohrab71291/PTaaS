@@ -64,12 +64,22 @@ async function sendToAgent(
   return agentId;
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export async function dispatchJob(
   executionId: string,
   script: string,
   config: Record<string, any>
 ): Promise<string> {
-  const agent = agentRegistry.getAvailable();
+  // Agents reconnect ~5s after a drop (e.g. a backend restart during deploy/dev).
+  // A scheduled cron tick that fires in that exact window used to fail outright
+  // with no k6 process ever launched — retry briefly instead of failing on the
+  // very first check.
+  let agent = agentRegistry.getAvailable();
+  for (let attempt = 0; !agent && attempt < 6; attempt++) {
+    await sleep(2000);
+    agent = agentRegistry.getAvailable();
+  }
   if (!agent) {
     throw new Error('No execution agents are online. Start an agent to run tests.');
   }

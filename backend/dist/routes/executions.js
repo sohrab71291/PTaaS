@@ -19,14 +19,7 @@ router.post('/', async (req, res) => {
     const spec = await prisma_1.default.testSpec.findUnique({ where: { id: specId } });
     if (!spec)
         return res.status(404).json({ error: 'Spec not found' });
-    const specRequest = spec.request;
-    const specOrigin = (() => { try {
-        return new URL(specRequest.url).origin;
-    }
-    catch {
-        return null;
-    } })();
-    let baseUrl = specOrigin ?? 'http://localhost:3000';
+    let baseUrl = 'http://localhost:3000';
     let envName = environment || 'local';
     if (spec.environmentId) {
         const env = await prisma_1.default.environment.findUnique({ where: { id: spec.environmentId } });

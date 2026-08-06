@@ -1,4 +1,5 @@
 import { Octokit } from '@octokit/rest';
+import { slugify } from './slug';
 
 export interface ScheduleGithubConfig {
   repoUrl?: string | null;
@@ -33,16 +34,16 @@ function getConfig(override?: ScheduleGithubConfig) {
   return { token, owner, repo, branch, scriptsPath, explicitScriptPath: null };
 }
 
-function scriptPath(specId: string, scriptsPath: string): string {
-  return `${scriptsPath}/${specId}.js`;
+function scriptPath(specName: string, scriptsPath: string): string {
+  return `${scriptsPath}/${slugify(specName)}.js`;
 }
 
-export function getScriptPathForSpec(specId: string): string {
+export function getScriptPathForSpec(specName: string): string {
   const config = getConfig();
-  return scriptPath(specId, config?.scriptsPath || 'scripts');
+  return scriptPath(specName, config?.scriptsPath || 'scripts');
 }
 
-export async function pushScript(specId: string, content: string, message: string): Promise<void> {
+export async function pushScript(specId: string, specName: string, content: string, message: string): Promise<void> {
   const config = getConfig();
   if (!config) {
     console.warn('[GitHub] Skipping script push — GITHUB_TOKEN/GITHUB_OWNER/GITHUB_REPO not configured');
@@ -50,7 +51,7 @@ export async function pushScript(specId: string, content: string, message: strin
   }
 
   const octokit = new Octokit({ auth: config.token });
-  const path = scriptPath(specId, config.scriptsPath);
+  const path = scriptPath(specName, config.scriptsPath);
 
   try {
     let sha: string | undefined;
@@ -78,18 +79,18 @@ export async function pushScript(specId: string, content: string, message: strin
       ...(sha ? { sha } : {}),
     });
   } catch (err: any) {
-    console.warn(`[GitHub] Failed to push script for spec ${specId}: ${err.message}`);
+    console.warn(`[GitHub] Failed to push script for spec ${specId} (${specName}): ${err.message}`);
   }
 }
 
-export async function fetchScript(specId: string, override?: ScheduleGithubConfig): Promise<string> {
+export async function fetchScript(specName: string, override?: ScheduleGithubConfig): Promise<string> {
   const config = getConfig(override);
   if (!config) {
     throw new Error('GitHub not configured — set a repo URL + token on the schedule, or GITHUB_TOKEN/GITHUB_OWNER/GITHUB_REPO env vars');
   }
 
   const octokit = new Octokit({ auth: config.token });
-  const path = config.explicitScriptPath || scriptPath(specId, config.scriptsPath);
+  const path = config.explicitScriptPath || scriptPath(specName, config.scriptsPath);
 
   const res = await octokit.repos.getContent({
     owner: config.owner,

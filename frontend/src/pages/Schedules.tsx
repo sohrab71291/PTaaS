@@ -38,6 +38,7 @@ interface Schedule {
 interface ScheduleExecution {
   id: string;
   status: string;
+  errorMessage: string | null;
   createdAt: string;
 }
 
@@ -508,6 +509,9 @@ const ScheduleModal: React.FC<{
                       />
                     </div>
                   </div>
+                  <p className="text-xs text-gray-400 -mt-1">
+                    Leave blank to use the auto-synced path: scripts/&lt;suite-name-slug&gt;.js
+                  </p>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -559,6 +563,9 @@ const ScheduleModal: React.FC<{
                       />
                     </div>
                   </div>
+                  <p className="text-xs text-gray-400 -mt-1">
+                    Leave blank to use the auto-synced path: scripts/&lt;suite-name-slug&gt;.js
+                  </p>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -837,11 +844,19 @@ export const Schedules: React.FC = () => {
                             onClick={() => navigate(`/report/${exec.id}`)}
                             className="flex items-center justify-between gap-3 text-xs px-2 py-1.5 rounded-lg hover:bg-white cursor-pointer transition-colors"
                           >
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
                               <StatusBadge status={exec.status} />
-                              <span className="text-gray-500">{new Date(exec.createdAt).toLocaleString()}</span>
+                              <span className="text-gray-500 flex-shrink-0">{new Date(exec.createdAt).toLocaleString()}</span>
+                              {exec.errorMessage && (
+                                <span
+                                  className="text-red-500 truncate"
+                                  title={exec.errorMessage}
+                                >
+                                  — {exec.errorMessage}
+                                </span>
+                              )}
                             </div>
-                            <span className="text-gray-400 font-mono">{exec.id}</span>
+                            <span className="text-gray-400 font-mono flex-shrink-0">{exec.id}</span>
                           </div>
                         ))}
                       </div>
