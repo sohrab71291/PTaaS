@@ -1,20 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { SloDefinition, SLO_METRIC_OPTIONS } from '../types/slo';
 import { useNavigate } from 'react-router-dom';
 import {
   Play, Square, Terminal, AlertCircle,
   CheckCircle, Loader2, ExternalLink, Copy, FileText, Sparkles, Send
 } from 'lucide-react';
-import { useDropzone } from 'react-dropzone';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 import { Stage, EnvVar } from '../lib/testProfiles';
 import { useExecution, ConsoleLine, ExecutionStatus } from '../contexts/ExecutionContext';
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-type ScriptSource = 'authoring' | 'upload' | 'paste';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -56,10 +51,7 @@ const BigMetricCard: React.FC<{ label: string; value: string; sub?: string; high
 export const Executor: React.FC = () => {
   const navigate = useNavigate();
 
-  // Script source
-  const [scriptSource, setScriptSource] = useState<ScriptSource>('authoring');
-  const [pastedScript, setPastedScript] = useState('');
-  const [uploadedScript, setUploadedScript] = useState('');
+  // Script source — always pulled from Test Authoring / the configured repo.
   const [authoringScript, setAuthoringScript] = useState('');
   const [generatedScriptMeta, setGeneratedScriptMeta] = useState<{ testType: string; complexity: string; source: string; generatedAt: string } | null>(null);
   const [testName, setTestName] = useState('');
@@ -144,7 +136,6 @@ export const Executor: React.FC = () => {
       .then(script => {
         if (cancelled) return;
         setAuthoringScript(script);
-        setScriptSource('authoring');
         setRepoScriptStatus('idle');
       })
       .catch((err: Error) => {
@@ -173,11 +164,7 @@ export const Executor: React.FC = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRunPending, authoringScript]);
 
-  const getActiveScript = (): string => {
-    if (scriptSource === 'authoring') return authoringScript;
-    if (scriptSource === 'upload')    return uploadedScript;
-    return pastedScript;
-  };
+  const getActiveScript = (): string => authoringScript;
 
   const handleExecute = async () => {
     const script = getActiveScript();
@@ -230,7 +217,6 @@ export const Executor: React.FC = () => {
             ...(profileType === 'staged'
               ? { stages }
               : { stages: [{ target: constantVus, duration: constantDuration }] }),
-            lastExecutorScriptSource: scriptSource,
           };
           return fetch(`/api/test-specs/${specId}`, {
             method: 'PUT',
@@ -241,20 +227,6 @@ export const Executor: React.FC = () => {
         .catch(() => {});
     }
   }, [status, executionId]);
-
-  const onDrop = useCallback((files: File[]) => {
-    const f = files[0];
-    if (!f) return;
-    const reader = new FileReader();
-    reader.onload = (e) => setUploadedScript(String(e.target?.result || ''));
-    reader.readAsText(f);
-  }, []);
-
-  const { getRootProps: getJsRootProps, getInputProps: getJsInputProps, isDragActive: isJsDragActive } = useDropzone({
-    onDrop,
-    accept: { 'application/javascript': ['.js'], 'text/plain': ['.js', '.txt'] },
-    multiple: false,
-  });
 
   const statusCfg  = statusConfig[status];
   const isExecuting = status === 'running' || status === 'starting';
@@ -515,64 +487,34 @@ export const Executor: React.FC = () => {
 
         <div>
           <p className={labelCls}>Script Source</p>
-          <div className="flex items-center gap-4 mb-2">
-            {(['authoring', 'upload', 'paste'] as ScriptSource[]).map(src => (
-              <label key={src} className="flex items-center gap-1.5 cursor-pointer text-sm whitespace-nowrap">
-                <input type="radio" name="scriptSource" value={src} checked={scriptSource === src}
-                  onChange={() => setScriptSource(src)} className="accent-brand-500" />
-                <span className="text-gray-700">
-                  {src === 'authoring' ? 'From Test Authoring' : src === 'upload' ? 'Upload .js File' : 'Paste Script'}
-                </span>
-              </label>
-            ))}
-          </div>
+          <div className="mb-2 text-sm text-gray-700">From Test Authoring</div>
 
-          {scriptSource === 'authoring' && (
-            repoScriptStatus === 'loading' ? (
-              <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-xs text-gray-600">
-                <Loader2 size={12} className="animate-spin" /> Pulling latest script from repo…
-              </div>
-            ) : repoScriptStatus === 'error' ? (
-              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-1.5 text-xs text-red-700">
-                Could not fetch script from repo: {repoScriptError}
-              </div>
-            ) : authoringScript ? (
-              <div className="flex items-center gap-2">
-                <span className="bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 text-xs text-green-700">
-                  ✓ {specId ? 'Latest from repo' : 'Script loaded'} ({authoringScript.split('\n').length} lines)
-                </span>
-                {generatedScriptMeta && (
-                  <span className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-1.5 text-xs text-purple-700">
-                    ✨ AI-generated · {generatedScriptMeta.source}
-                  </span>
-                )}
-              </div>
-            ) : (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 text-xs text-amber-700">
-                No script found. Generate one in{' '}
-                <button type="button" className="underline hover:text-amber-900" onClick={() => navigate('/tests/new')}>
-                  Test Authoring
-                </button>.
-              </div>
-            )
-          )}
-
-          {scriptSource === 'upload' && (
-            <div {...getJsRootProps()} className={`border-2 border-dashed rounded-lg px-4 py-2 text-center cursor-pointer text-xs transition-colors ${isJsDragActive ? 'border-brand-500 bg-brand-50' : 'border-gray-300 hover:border-brand-400 hover:bg-gray-50'}`}>
-              <input {...getJsInputProps()} />
-              {uploadedScript
-                ? <span className="text-green-600">✓ {uploadedScript.split('\n').length} lines loaded</span>
-                : <span className="text-gray-500">Drop .js file or click to browse</span>}
+          {repoScriptStatus === 'loading' ? (
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-xs text-gray-600">
+              <Loader2 size={12} className="animate-spin" /> Pulling latest script from repo…
             </div>
-          )}
-
-          {scriptSource === 'paste' && (
-            <textarea
-              className="w-full h-20 px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-mono text-gray-800 focus:outline-none focus:ring-2 focus:ring-brand-500 resize-none"
-              placeholder="Paste your K6 script here..."
-              value={pastedScript}
-              onChange={e => setPastedScript(e.target.value)}
-            />
+          ) : repoScriptStatus === 'error' ? (
+            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-1.5 text-xs text-red-700">
+              Could not fetch script from repo: {repoScriptError}
+            </div>
+          ) : authoringScript ? (
+            <div className="flex items-center gap-2">
+              <span className="bg-green-50 border border-green-200 rounded-lg px-3 py-1.5 text-xs text-green-700">
+                ✓ {specId ? 'Latest from repo' : 'Script loaded'} ({authoringScript.split('\n').length} lines)
+              </span>
+              {generatedScriptMeta && (
+                <span className="bg-purple-50 border border-purple-200 rounded-lg px-3 py-1.5 text-xs text-purple-700">
+                  ✨ AI-generated · {generatedScriptMeta.source}
+                </span>
+              )}
+            </div>
+          ) : (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5 text-xs text-amber-700">
+              No script found. Generate one in{' '}
+              <button type="button" className="underline hover:text-amber-900" onClick={() => navigate('/tests/new')}>
+                Test Authoring
+              </button>.
+            </div>
           )}
         </div>
       </div>
